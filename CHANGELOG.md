@@ -3,13 +3,23 @@
 All notable changes to napari-js are documented here. The format roughly follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.11.0]
+
+### Changed
+
+- **`VolumeLayer.voxelSize` is now live-mutable.** Setting it bumps a `geometryVersion` and rebuilds
+  only the model matrix (the volume texture is untouched), so a host can restretch an axis smoothly
+  — e.g. an interactive Z-height gizmo — without re-uploading the volume.
+- **`AxesLayer` dimensions (`width`/`height`/`depth`) are now live-mutable** (settable, bumping
+  `geometryVersion`), so the gizmo box can follow a volume restretch in real time.
+
 ## [0.10.0]
 
 ### Added
 
 - **Per-axis voxel scale on volumes (`VolumeLayer.voxelSize`).** New `voxelSize?: [sx, sy, sz]`
   option (napari's `scale`, default `[1, 1, 1]`). The rendered box is `[width*sx, height*sy,
-  depth*sz]` and the camera frames that world box, so an anisotropic stack — e.g. XY downsampled
+depth*sz]` and the camera frames that world box, so an anisotropic stack — e.g. XY downsampled
   but Z kept — holds its true proportions instead of the raw voxel-count aspect. Threaded through
   `VolumeChannel.voxelSize` in `MultiChannelVolumeView`. The raymarch samples in normalized texture
   space, so the box scale is independent of the sampling resolution: changing the decimate factor

@@ -37,28 +37,55 @@ const BOX_COLOR: RGB = [0.5, 0.5, 0.55];
  */
 export class AxesLayer extends Layer {
   readonly kind = 'axes';
-  readonly width: number;
-  readonly height: number;
-  readonly depth: number;
   colors: AxesColors;
 
   /** Bumped when a geometry-affecting property changes so the visual rebuilds its vertex buffer. */
   geometryVersion = 0;
 
+  private _width: number;
+  private _height: number;
+  private _depth: number;
   private _voxelSize: [number, number, number];
   private _tickCount: number;
   private _boundingBox: boolean;
 
   constructor(width: number, height: number, depth: number, opts: AxesLayerOptions = {}) {
     super({ name: opts.name });
-    this.width = width;
-    this.height = height;
-    this.depth = depth;
+    this._width = width;
+    this._height = height;
+    this._depth = depth;
     this._voxelSize = opts.voxelSize ?? [1, 1, 1];
     this._tickCount = opts.tickCount ?? 5;
     this._boundingBox = opts.boundingBox ?? true;
     this.colors = opts.colors ?? DEFAULT_COLORS;
     if (opts.visible !== undefined) this._visible = opts.visible;
+  }
+
+  /** Box extent per axis (world units). Mutable so a host can restretch the gizmo live (e.g. a
+   *  Z-height control) — the visual rebuilds its line geometry on the version bump. */
+  get width(): number {
+    return this._width;
+  }
+  set width(v: number) {
+    this._width = v;
+    this.geometryVersion++;
+    this.changed.emit(this);
+  }
+  get height(): number {
+    return this._height;
+  }
+  set height(v: number) {
+    this._height = v;
+    this.geometryVersion++;
+    this.changed.emit(this);
+  }
+  get depth(): number {
+    return this._depth;
+  }
+  set depth(v: number) {
+    this._depth = v;
+    this.geometryVersion++;
+    this.changed.emit(this);
   }
 
   get voxelSize(): [number, number, number] {

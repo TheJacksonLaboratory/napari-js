@@ -33,11 +33,13 @@ export class VolumeLayer extends Layer {
   readonly width: number;
   readonly height: number;
   readonly depth: number;
-  /** World size of one voxel per axis (napari's `scale`); the box is `dims * voxelSize`. */
-  readonly voxelSize: readonly [number, number, number];
   readonly data: Uint8Array;
 
   colormapVersion = 0;
+  /** Bumped when the box geometry (voxelSize) changes so the visual rebuilds its model matrix. */
+  geometryVersion = 0;
+
+  private _voxelSize: [number, number, number];
 
   private _colormap: Colormap;
   private _contrastLimits: [number, number];
@@ -61,7 +63,7 @@ export class VolumeLayer extends Layer {
     this.height = height;
     this.depth = depth;
     const vs = opts.voxelSize;
-    this.voxelSize = vs ? [vs[0], vs[1], vs[2]] : [1, 1, 1];
+    this._voxelSize = vs ? [vs[0], vs[1], vs[2]] : [1, 1, 1];
     this._colormap = resolveColormap(opts.colormap ?? 'viridis');
     this._contrastLimits = opts.contrastLimits ?? [0, 255];
     this._gamma = opts.gamma ?? 1;
@@ -78,6 +80,18 @@ export class VolumeLayer extends Layer {
   set colormap(value: Colormap | string) {
     this._colormap = resolveColormap(value);
     this.colormapVersion++;
+    this.changed.emit(this);
+  }
+
+  /** World size of one voxel per axis (napari's `scale`); the rendered box is `dims * voxelSize`.
+   *  Mutable so a host can restretch an axis live (e.g. a Z-height gizmo) — only the model matrix
+   *  rebuilds, the volume texture is untouched. */
+  get voxelSize(): readonly [number, number, number] {
+    return [this._voxelSize[0], this._voxelSize[1], this._voxelSize[2]];
+  }
+  set voxelSize(value: readonly [number, number, number]) {
+    this._voxelSize = [value[0], value[1], value[2]];
+    this.geometryVersion++;
     this.changed.emit(this);
   }
 

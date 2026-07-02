@@ -51,4 +51,21 @@ describe('AxesLayer', () => {
     expect(layer.tickCount).toBe(3);
     expect(segmentCount(axesLineVertices(layer))).toBe(3 + 3 * 3); // axes + ticks, no box
   });
+
+  it('restretches the box live when a dimension changes (Z-height gizmo)', () => {
+    const layer = new AxesLayer(8, 8, 8, {
+      boundingBox: false,
+      tickCount: 0,
+      voxelSize: [1, 1, 1],
+    });
+    let emits = 0;
+    layer.changed.connect(() => emits++);
+    const v0 = layer.geometryVersion;
+    layer.depth = 24; // stretch Z ×3
+    expect(layer.depth).toBe(24);
+    expect(layer.geometryVersion).toBe(v0 + 1);
+    expect(emits).toBe(1);
+    // The Z axis segment now spans the taller box: from -d/2 to +d/2 = 24.
+    expect(layer.physicalExtent).toEqual([8, 8, 24]);
+  });
 });

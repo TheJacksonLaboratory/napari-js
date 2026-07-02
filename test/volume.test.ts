@@ -97,4 +97,15 @@ describe('VolumeLayer', () => {
     const box = [w.width * w.voxelSize[0], w.height * w.voxelSize[1], w.depth * w.voxelSize[2]];
     expect(box).toEqual([4, 2, 16]);
   });
+
+  it('bumps geometryVersion and emits when voxelSize changes (live Z-height)', () => {
+    const v = new VolumeLayer(new Uint8Array(8), 2, 2, 2);
+    let n = 0;
+    v.changed.connect(() => n++);
+    const before = v.geometryVersion;
+    v.voxelSize = [1, 1, 3];
+    expect(v.voxelSize).toEqual([1, 1, 3]);
+    expect(v.geometryVersion).toBe(before + 1);
+    expect(n).toBe(1);
+  });
 });

@@ -25,11 +25,12 @@ export class VolumeVisual implements LayerVisual {
   private readonly lutTexture: GPUTexture;
   private readonly volSampler: GPUSampler;
   private readonly lutSampler: GPUSampler;
-  private readonly model: Float32Array;
+  private model: Float32Array;
   private bindGroup: GPUBindGroup;
   private pipeline: GPURenderPipeline;
   private currentBlend: BlendMode;
   private lutVersion: number;
+  private geometryVersion: number;
 
   constructor(
     private readonly device: GPUDevice,
@@ -72,19 +73,25 @@ export class VolumeVisual implements LayerVisual {
     });
     this.lutSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 
-    // Model: map volume [0,1]^3 → world box centered at origin, sized by voxel dims × per-axis
-    // voxelSize. voxelSize lets an anisotropic stack (e.g. XY downsampled but Z not) keep its true
-    // proportions instead of the raw voxel-count aspect — the raymarch samples in normalized
-    // texture space, so the box scale is independent of the sampling resolution.
-    const [sx, sy, sz] = layer.voxelSize;
-    this.model = multiply(
-      scale3d(layer.width * sx, layer.height * sy, layer.depth * sz),
-      translate3d(-0.5, -0.5, -0.5),
-    );
+    this.model = this.buildModel();
+    this.geometryVersion = layer.geometryVersion;
 
     this.currentBlend = layer.blending;
     this.pipeline = this.buildPipeline(layer.blending);
     this.bindGroup = this.buildBindGroup();
+  }
+
+  // Model: map volume [0,1]^3 → world box centered at origin, sized by voxel dims × per-axis
+  // voxelSize. voxelSize lets an anisotropic stack (e.g. XY downsampled but Z not) keep its true
+  // proportions instead of the raw voxel-count aspect — the raymarch samples in normalized texture
+  // space, so the box scale is independent of the sampling resolution. Rebuilt live when voxelSize
+  // changes (e.g. a Z-height gizmo) — see `sync`.
+  private buildModel(): Float32Array {
+    const [sx, sy, sz] = this.layer.voxelSize;
+    return multiply(
+      scale3d(this.layer.width * sx, this.layer.height * sy, this.layer.depth * sz),
+      translate3d(-0.5, -0.5, -0.5),
+    );
   }
 
   private buildPipeline(blend: BlendMode): GPURenderPipeline {
@@ -134,6 +141,10 @@ export class VolumeVisual implements LayerVisual {
     if (this.layer.colormapVersion !== this.lutVersion) {
       this.lutVersion = this.layer.colormapVersion;
       this.writeLut();
+    }
+    if (this.layer.geometryVersion !== this.geometryVersion) {
+      this.geometryVersion = this.layer.geometryVersion;
+      this.model = this.buildModel();
     }
   }
 
