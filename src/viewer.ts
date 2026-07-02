@@ -242,7 +242,10 @@ export class Viewer {
   ): VolumeLayer {
     const layer = new VolumeLayer(data, width, height, depth, opts);
     this.model.layers.add(layer);
-    this.model.camera3d.frame(width, height, depth);
+    // Frame the camera on the WORLD box (dims × voxelSize), not the raw voxel counts, so an
+    // anisotropic/downsampled volume is framed at its true rendered size.
+    const [sx, sy, sz] = layer.voxelSize;
+    this.model.camera3d.frame(width * sx, height * sy, depth * sz);
     this.model.dims.ndisplay = 3;
     return layer;
   }

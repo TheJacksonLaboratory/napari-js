@@ -1,6 +1,6 @@
 {
   "name": "napari-js",
-  "version": "0.9.3",
+  "version": "0.10.0",
   "description": "WebGPU rendering engine porting napari's visualization model to the browser.",
   "type": "module",
   "license": "MIT",

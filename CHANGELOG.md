@@ -3,6 +3,18 @@
 All notable changes to napari-js are documented here. The format roughly follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.10.0]
+
+### Added
+
+- **Per-axis voxel scale on volumes (`VolumeLayer.voxelSize`).** New `voxelSize?: [sx, sy, sz]`
+  option (napari's `scale`, default `[1, 1, 1]`). The rendered box is `[width*sx, height*sy,
+  depth*sz]` and the camera frames that world box, so an anisotropic stack — e.g. XY downsampled
+  but Z kept — holds its true proportions instead of the raw voxel-count aspect. Threaded through
+  `VolumeChannel.voxelSize` in `MultiChannelVolumeView`. The raymarch samples in normalized texture
+  space, so the box scale is independent of the sampling resolution: changing the decimate factor
+  changes detail, not the volume's shape.
+
 ## [0.9.3]
 
 ### Added

@@ -86,4 +86,15 @@ describe('VolumeLayer', () => {
     expect(v.colormapVersion).toBe(before + 1);
     expect(n).toBe(1);
   });
+
+  it('defaults voxelSize to [1,1,1] and copies a provided value', () => {
+    expect(new VolumeLayer(new Uint8Array(8), 2, 2, 2).voxelSize).toEqual([1, 1, 1]);
+    const v = new VolumeLayer(new Uint8Array(8), 2, 2, 2, { voxelSize: [0.25, 0.25, 4] });
+    expect(v.voxelSize).toEqual([0.25, 0.25, 4]);
+    // Anisotropic voxelSize scales the box: a downsampled-XY / full-Z stack keeps its proportions
+    // regardless of the sampled voxel counts (16*0.25 : 8*0.25 : 4*4 = 4 : 2 : 16).
+    const w = new VolumeLayer(new Uint8Array(16 * 8 * 4), 16, 8, 4, { voxelSize: [0.25, 0.25, 4] });
+    const box = [w.width * w.voxelSize[0], w.height * w.voxelSize[1], w.depth * w.voxelSize[2]];
+    expect(box).toEqual([4, 2, 16]);
+  });
 });

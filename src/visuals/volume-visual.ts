@@ -72,9 +72,13 @@ export class VolumeVisual implements LayerVisual {
     });
     this.lutSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 
-    // Model: map volume [0,1]^3 → world box centered at origin, sized by voxel dims.
+    // Model: map volume [0,1]^3 → world box centered at origin, sized by voxel dims × per-axis
+    // voxelSize. voxelSize lets an anisotropic stack (e.g. XY downsampled but Z not) keep its true
+    // proportions instead of the raw voxel-count aspect — the raymarch samples in normalized
+    // texture space, so the box scale is independent of the sampling resolution.
+    const [sx, sy, sz] = layer.voxelSize;
     this.model = multiply(
-      scale3d(layer.width, layer.height, layer.depth),
+      scale3d(layer.width * sx, layer.height * sy, layer.depth * sz),
       translate3d(-0.5, -0.5, -0.5),
     );
 

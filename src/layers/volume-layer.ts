@@ -15,6 +15,12 @@ export interface VolumeLayerOptions {
   opacity?: number;
   blending?: BlendMode;
   visible?: boolean;
+  /**
+   * World size of one voxel per axis (x, y, z) — napari's `scale`. The rendered box is
+   * `[width*sx, height*sy, depth*sz]`, so an anisotropic stack (e.g. XY downsampled but Z not)
+   * keeps its true proportions instead of the raw voxel-count aspect. Default `[1, 1, 1]`.
+   */
+  voxelSize?: readonly [number, number, number];
 }
 
 /**
@@ -27,6 +33,8 @@ export class VolumeLayer extends Layer {
   readonly width: number;
   readonly height: number;
   readonly depth: number;
+  /** World size of one voxel per axis (napari's `scale`); the box is `dims * voxelSize`. */
+  readonly voxelSize: readonly [number, number, number];
   readonly data: Uint8Array;
 
   colormapVersion = 0;
@@ -52,6 +60,8 @@ export class VolumeLayer extends Layer {
     this.width = width;
     this.height = height;
     this.depth = depth;
+    const vs = opts.voxelSize;
+    this.voxelSize = vs ? [vs[0], vs[1], vs[2]] : [1, 1, 1];
     this._colormap = resolveColormap(opts.colormap ?? 'viridis');
     this._contrastLimits = opts.contrastLimits ?? [0, 255];
     this._gamma = opts.gamma ?? 1;

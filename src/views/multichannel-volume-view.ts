@@ -23,6 +23,9 @@ export interface VolumeChannel {
   contrastLimits?: [number, number];
   gamma?: number;
   visible?: boolean;
+  /** World size of one voxel per axis (napari's `scale`); keeps an anisotropic stack's true
+   *  proportions. All channels of a volume share the same grid, so pass the same value. */
+  voxelSize?: readonly [number, number, number];
 }
 
 /** Live display patch for a single volume channel (see {@link MultiChannelVolumeView.updateChannel}). */
@@ -96,6 +99,7 @@ export class MultiChannelVolumeView {
         gamma: ch.gamma ?? 1,
         visible: ch.visible ?? true,
         rendering,
+        ...(ch.voxelSize ? { voxelSize: ch.voxelSize } : {}),
         ...(mode === 'multichannel' ? { blending: 'additive' as BlendMode } : {}),
       };
       this._layers.push(this.host.addVolume(ch.data, ch.width, ch.height, ch.depth, layerOpts));
