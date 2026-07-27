@@ -3,12 +3,13 @@
 A browser-native, **WebGPU** rendering engine that ports the visualization model of
 [napari](https://napari.org) (the Python multi-dimensional image viewer) to TypeScript.
 
-> **Status:** **published to npm — `npm install napari-js`** (latest: **v0.3.0**). napari-js
+> **Status:** **published to npm — `npm install napari-js`** (latest: **v0.11.0**). napari-js
 > implements the POC called for in
 > [jit-ui#102](https://github.com/TheJacksonLaboratory/jit-ui/issues/102) — a browser-based
-> napari shipped as a JS library. Phase B (the renderer, NJ-0…NJ-5+) is complete and
-> browser-verified; Phase C (the `jax-image-visualization` `IVisualizer` backend) is underway.
-> See the [CHANGELOG](./CHANGELOG.md).
+> napari shipped as a JS library. The renderer (NJ-0…NJ-5+) is complete and browser-verified,
+> and napari-js now ships **in production** as the WebGPU backend of
+> [`sci-image-visualizer`](#used-in-production-sci-image-visualizer) — the engine behind the
+> **JAX Image Tools** viewer. See the [CHANGELOG](./CHANGELOG.md).
 
 ## Features
 
@@ -87,17 +88,110 @@ brings those strengths to the web as a reusable npm package.
 ## Where it fits
 
 ```
-~/git/napari      Reference: the Python renderer being ported (napari/_vispy, layers, components)
-~/git/napari-js   THIS repo: the standalone TS + WebGPU port, published to npm
-~/git/jit-ui      Eventual consumer: jax-image-visualization adds a napari-js IVisualizer backend
+~/git/napari                Reference: the Python renderer being ported (napari/_vispy, layers, components)
+~/git/napari-js             THIS repo: the standalone TS + WebGPU port, published to npm
+~/git/sci-image-visualizer  Main consumer: wraps napari-js as its WebGPU IVisualizer backend
 ```
 
-The first downstream consumer is the `jax-image-visualization` library in the `jit-ui`
-monorepo ([jit-ui#102](https://github.com/TheJacksonLaboratory/jit-ui/issues/102)), which adds
-napari-js as a new `IVisualizer` backend alongside its OpenSeadragon and Plotly backends — to
-swap 2D image plotting with OSD and 3D slicing / isosurfaces with Plotly. napari-js is built
-and published independently; that integration (Phase C) is described in
-[`docs/06-jit-ui-integration.md`](./docs/06-jit-ui-integration.md).
+napari-js is built and published independently. Its main downstream consumer is
+[`@jax-data-science/sci-image-visualizer`](#used-in-production-sci-image-visualizer), the
+Angular visualization library behind **JAX Image Tools**, which registers napari-js as its
+WebGPU `IVisualizer` backend alongside OpenSeadragon and Plotly. See [Used in
+production](#used-in-production-sci-image-visualizer) below; the original design of that seam
+is in [`docs/06-jit-ui-integration.md`](./docs/06-jit-ui-integration.md).
+
+## Used in production: sci-image-visualizer
+
+napari-js is the **WebGPU rendering backend** of `@jax-data-science/sci-image-visualizer`
+(v0.2.2) — The Jackson Laboratory's Angular 17 library for interactive scientific image
+visualization, and the engine behind the **JAX Image Tools** viewer shown below.
+
+`sci-image-visualizer` is a ports-and-adapters library: every renderer implements one
+`IVisualizer` contract, and a router (`RoutingVisualizerService`) picks one per plot type.
+napari-js sits alongside two other backends and is the **production default** for 3D:
+
+| What's rendered                        | Backend                                                                              |
+| -------------------------------------- | ------------------------------------------------------------------------------------ |
+| **3D Volume, Isosurface, Surface**     | **napari-js (WebGPU)** — production default, Plotly fallback                         |
+| napari 2D image & scatter modes        | napari-js (WebGPU), with OpenSeadragon / Plotly fallback                             |
+| Gigapixel whole-slide · other 2D plots | OpenSeadragon / Plotly (napari-js 2D image opt-in via `VizConfig.useNapariRenderer`) |
+
+- **Dependency:** a plain npm dependency — `"napari-js": "^0.11.0"` — bundled, not a peer dep.
+- **Adapter:** `NapariVisualizerService` (`@Injectable`, `implements IVisualizer`) constructs
+  one `Viewer`, awaits `viewer.ready`, and dispatches by plot type.
+- **DI wiring:** `provideVisualization()` registers all three backends and binds the
+  `VISUALIZER` token to the router.
+
+### How it's called
+
+Condensed from `NapariVisualizerService` (the volume / isosurface path). One `Viewer` drives
+every 3D mode — the only thing that differs between the screenshots below is the `rendering`
+flag and how many channels are pushed in:
+
+```ts
+import { Viewer, MultiChannelVolumeView, tintColormap, type VolumeChannel } from 'napari-js';
+
+// created once, when the host mounts the visualizer
+const viewer = new Viewer({ canvas, background: { r: 0.07, g: 0.07, b: 0.09, a: 1 } });
+await viewer.ready;
+
+// Volume & Isosurface both go through a MultiChannelVolumeView:
+//   · one additive, tinted channel per fluorescence channel → multi-channel volume
+//   · a single colormapped channel                          → grayscale / CT volume
+const view = new MultiChannelVolumeView(viewer);
+const channels: VolumeChannel[] = state.channels.map((ch) => ({
+  data: ch.volume, // Uint8Array, length width*height*depth, x-fastest
+  width,
+  height,
+  depth,
+  colormap: tintColormap(ch.color), // black → channel colour
+  contrastLimits: [ch.min, ch.max],
+  gamma: ch.gamma,
+  visible: ch.visible,
+}));
+
+// rendering: 'mip' for the Volume mode, 'iso' for Isosurface
+const rendering = isIsosurface ? 'iso' : 'mip';
+view.render(channels.length > 1 ? 'multichannel' : 'grayscale', channels, { rendering });
+
+// the toolbar's live "Iso" slider maps straight onto the volume layer's setters
+// (updates a GPU uniform — no data re-upload):
+volumeLayer.rendering = 'iso';
+volumeLayer.contrastLimits = [isoMin, isoMax];
+volumeLayer.isoThreshold = 0.5;
+```
+
+2D images use the sibling `MultiChannelImageView` (`render('multichannel' | 'grayscale' |
+'rgb', views, { interpolation })`); the region-centroid scatter, 3D point cloud, height-field
+surface, and axes gizmo call `viewer.addPoints`, `viewer.addPoints3D`, `heightField` +
+`viewer.addSurface`, and `viewer.addAxes` directly.
+
+### In the JAX Image Tools viewer
+
+Each shot is a different napari-js render mode, chosen from the toolbar's visualizer dropdown:
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/images/volume-ct-scan.png" alt="Colormapped 3D volume raymarch of a CT scan" />
+      <br /><sub><b>Volume (napari · WebGPU)</b> — MIP raymarch of a CT volume (ct-org <code>volume-2.nii</code>) through a scalar colormap.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/images/volume-axes.png" alt="Grayscale MIP volume of a DICOM series with a 3D axes gizmo" />
+      <br /><sub><b>Volume + axes</b> — grayscale MIP of a DICOM series with the 3D scale/axes gizmo (<code>addAxes</code>) and the Channels &amp; Histogram controls.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/images/volume-multichannel.png" alt="Multi-channel fluorescence volume with per-channel LUTs" />
+      <br /><sub><b>Multi-channel volume</b> — four fluorescence channels composited additively on the GPU (one tinted <code>VolumeChannel</code> each), with live per-channel LUT / contrast / gamma.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/images/isosurface-ct-scan.png" alt="Iso-surface extraction of a CT scan with a live threshold slider" />
+      <br /><sub><b>Isosurface (napari · WebGPU)</b> — <code>rendering: 'iso'</code> on the CT volume, threshold driven live by the toolbar's <code>Iso</code> slider.</sub>
+    </td>
+  </tr>
+</table>
 
 ## Docs
 
@@ -109,7 +203,7 @@ and published independently; that integration (Phase C) is described in
 | [03 — RenderState IR](./docs/03-render-state-ir.md)                      | The serializable intermediate representation between model and GPU                      |
 | [04 — WGSL rendering plan](./docs/04-wgsl-rendering-plan.md)             | Shader pipelines: image+colormap, multi-channel compositing, future raycasting          |
 | [05 — Roadmap](./docs/05-roadmap.md)                                     | Milestones NJ-0 … NJ-5+                                                                 |
-| [06 — jit-ui integration](./docs/06-jit-ui-integration.md)               | Phase C: the `IVisualizer` adapter in jax-image-visualization (deferred)                |
+| [06 — jit-ui integration](./docs/06-jit-ui-integration.md)               | The `IVisualizer` adapter design — now shipped in `sci-image-visualizer`                |
 | [07 — napari concept mapping](./docs/07-napari-concept-mapping.md)       | How each napari concept maps to napari-js                                               |
 | [08 — Landscape & related work](./docs/08-landscape-and-related-work.md) | Does a browser napari exist? CZI/roadmap WIP, Viv/vizarr/ndv, and how napari-js differs |
 
