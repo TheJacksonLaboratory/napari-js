@@ -3,6 +3,26 @@
 All notable changes to napari-js are documented here. The format roughly follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.11.1]
+
+### Changed
+
+- **The project now lives at
+  [TheJacksonLaboratory/napari-js](https://github.com/TheJacksonLaboratory/napari-js).** Repository,
+  homepage, bug-tracker, and security-advisory links point at the new org. The package name on npm
+  (`napari-js`) is unchanged, as are the MIT terms — The Jackson Laboratory is added alongside the
+  original creator in `LICENSE`.
+- **`package-lock.json` version field corrected.** It had drifted at `0.1.1` since that release while
+  `package.json` moved on; both now track the real version.
+
+### Added
+
+- **README: integration guide for the primary consumer**, `sci-image-visualizer` — dependency and
+  adapter wiring, plot-type dispatch, and rendered screenshots (volume, multi-channel, iso-surface,
+  axes gizmo) under `docs/images/`.
+- **README acknowledgments** crediting upstream [napari](https://napari.org) (BSD-3-Clause), whose
+  layer model, naming, and rendering semantics napari-js follows.
+
 ## [0.11.0]
 
 ### Changed
