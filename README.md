@@ -209,7 +209,12 @@ Each shot is a different napari-js render mode, chosen from the toolbar's visual
 
 ## Acknowledgments
 
-Built with the help of Claude Opus 4.8 (Anthropic).
+napari-js is an independent TypeScript reimplementation of the visualization model of
+[napari](https://napari.org) — the Python n-dimensional image viewer
+([github.com/napari/napari](https://github.com/napari/napari), BSD-3-Clause). The layer
+model, naming, and rendering semantics follow napari's; all credit for that design goes to
+the napari core developers and its community. This project is not affiliated with or
+endorsed by the napari project.
 
 ## License
 
