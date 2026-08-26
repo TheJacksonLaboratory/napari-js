@@ -218,4 +218,4 @@ endorsed by the napari project.
 
 ## License
 
-[MIT](./LICENSE) © Baha Elkassaby
+MIT — see [LICENSE](./LICENSE).
