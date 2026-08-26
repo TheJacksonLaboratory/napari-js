@@ -7,7 +7,7 @@ napari-js is pre-1.0. Only the latest published `0.x` release receives fixes.
 ## Reporting a vulnerability
 
 Please report security issues **privately** via GitHub Security Advisories —
-<https://github.com/belkassaby/napari-js/security/advisories/new> — rather than opening a
+<https://github.com/TheJacksonLaboratory/napari-js/security/advisories/new> — rather than opening a
 public issue. We'll acknowledge the report and coordinate a fix and disclosure.
 
 ## Scope
