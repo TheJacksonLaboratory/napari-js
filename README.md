@@ -3,7 +3,7 @@
 A browser-native, **WebGPU** rendering engine that ports the visualization model of
 [napari](https://napari.org) (the Python multi-dimensional image viewer) to TypeScript.
 
-> **Status:** **published to npm — `npm install napari-js`** (latest: **v0.11.0**). napari-js
+> **Status:** **published to npm — `npm install napari-js`** (latest: **v0.11.1**). napari-js
 > implements the POC called for in
 > [jit-ui#102](https://github.com/TheJacksonLaboratory/jit-ui/issues/102) — a browser-based
 > napari shipped as a JS library. The renderer (NJ-0…NJ-5+) is complete and browser-verified,
@@ -116,7 +116,7 @@ napari-js sits alongside two other backends and is the **production default** fo
 | napari 2D image & scatter modes        | napari-js (WebGPU), with OpenSeadragon / Plotly fallback                             |
 | Gigapixel whole-slide · other 2D plots | OpenSeadragon / Plotly (napari-js 2D image opt-in via `VizConfig.useNapariRenderer`) |
 
-- **Dependency:** a plain npm dependency — `"napari-js": "^0.11.0"` — bundled, not a peer dep.
+- **Dependency:** a plain npm dependency — `"napari-js": "^0.11.1"` — bundled, not a peer dep.
 - **Adapter:** `NapariVisualizerService` (`@Injectable`, `implements IVisualizer`) constructs
   one `Viewer`, awaits `viewer.ready`, and dispatches by plot type.
 - **DI wiring:** `provideVisualization()` registers all three backends and binds the
