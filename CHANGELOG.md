@@ -3,6 +3,42 @@
 All notable changes to napari-js are documented here. The format roughly follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`ShapesLayer` — closed polygon rings in 2D** (`viewer.addShapes(coords, offsets, opts)`), the
+  napari `Shapes` analog restricted to rings. Geometry arrives **flat**: `coords` is
+  `[x0,y0,x1,y1,…]` and `offsets` holds `shapeCount + 1` vertex offsets, so shape `i` is
+  `coords[2*offsets[i] .. 2*offsets[i+1])` and closes implicitly. That is the shape segmentation
+  comes in, and the only shape that survives 10⁵–10⁶ cells — one object and one array per polygon
+  would dominate memory long before the GPU noticed.
+
+  Draws boundaries (`draw: 'outline'`, a `line-list`) or interiors (`'fill'`, a centroid fan), and
+  colours by **one scalar per shape** through a colormap, so a cluster id or a measurement maps to
+  colour without the caller expanding anything per vertex. `values` and `positions` live in
+  separate vertex buffers: recolouring rewrites the smaller one and leaves 10⁶ positions untouched.
+
+  The expansion is two **pure, GPU-free** functions — `ringsToOutline` and `ringsToFan`, plus
+  `shapeVertexCount` to size a buffer before paying for it — following `heightField`'s precedent
+  and unit-tested the same way. The fan is exact for **star-convex** rings, which cell and nucleus
+  boundaries are; a ring that folds past its own centroid needs a general triangulation, which this
+  is not. WebGPU has no line width, so an outline is one device pixel at any zoom.
+
+  Measured before it was written: 2.4 M edges draw in ~3.5 ms and 24 M in ~7 ms, and filled cells
+  are cheaper than outlines. Playground demo **8** exercises both modes over an image.
+
+### Changed
+
+- **`acquireDevice` now requests the adapter's buffer limits.** `requestDevice` otherwise grants the
+  spec defaults — 256 MiB per buffer, 128 MiB per storage binding — whatever the hardware offers,
+  and a layer that needs more fails **asynchronously**: the allocation is dropped, the buffer reads
+  as zeros, and nothing throws, so it presents as a coordinate bug rather than a limits one. The
+  request asks for the adapter's own values (which can never exceed them) and falls back to the
+  defaults if an implementation refuses, since device acquisition must not regress.
+- **`ShapesVisual` refuses an over-limit expansion loudly**, naming the size, the shape count and
+  `maxBufferSize`, instead of allocating past the limit and drawing nothing.
+
 ## [0.11.1]
 
 ### Changed

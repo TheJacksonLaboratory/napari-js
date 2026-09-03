@@ -23,7 +23,8 @@ let onKey: ((e: KeyboardEvent) => void) | null = null;
 let cleanup: (() => void) | null = null;
 
 const DEMOS =
-  '1 image · 2 multi-channel · 3 tiled+z · 4 points+labels · 5 volume · 6 surface · 7 scatter3d';
+  '1 image · 2 multi-channel · 3 tiled+z · 4 points+labels · 5 volume · 6 surface · 7 scatter3d' +
+  ' · 8 shapes';
 
 function status(line: string): void {
   msg.textContent = `napari-js ${VERSION} — [${DEMOS}]  ·  ${line}`;
@@ -263,6 +264,64 @@ async function demoScatter3d(): Promise<void> {
   status(`3D scatter · ${N} points · drag = orbit, wheel = zoom`);
 }
 
+async function demoShapes(): Promise<void> {
+  const v = await start({ r: 0.05, g: 0.05, b: 0.07, a: 1 });
+  if (!v) return;
+  // A field of irregular "cell" rings over an image, as flat rings — the shape
+  // segmentation arrives in, and the shape that survives 10^5 of them.
+  const cols = 60;
+  const rows = 40;
+  const perRing = 16;
+  const shapes = cols * rows;
+  const coords = new Float32Array(shapes * perRing * 2);
+  const offsets = new Uint32Array(shapes + 1);
+  const values = new Float32Array(shapes);
+  let w = 0;
+  for (let s = 0; s < shapes; s++) {
+    offsets[s] = s * perRing;
+    const gx = s % cols;
+    const gy = Math.floor(s / cols);
+    const cx = 12 + gx * 8.5;
+    const cy = 12 + gy * 8.5;
+    const r = 2.6 + ((gx + gy) % 3) * 0.5;
+    for (let i = 0; i < perRing; i++) {
+      const a = (i / perRing) * Math.PI * 2;
+      const jitter = 0.78 + ((gx * 7 + gy * 13 + i * 5) % 9) / 22;
+      coords[w++] = cx + Math.cos(a) * r * jitter;
+      coords[w++] = cy + Math.sin(a) * r * jitter;
+    }
+    values[s] = (gx / cols) * 100; // a stand-in cluster / measurement
+  }
+  offsets[shapes] = shapes * perRing;
+
+  v.addImage(gradient(512, 512), { colormap: 'gray', opacity: 0.6 });
+  const layer = v.addShapes(coords, offsets, {
+    draw: 'outline',
+    values,
+    colormap: 'viridis',
+    opacity: 0.95,
+    blending: 'translucent',
+  });
+  const report = (): void =>
+    status(
+      `shapes · ${shapes} rings × ${perRing} verts · ${layer.draw} · ` +
+        `${layer.vertexCount().toLocaleString()} vertices · f = outline/fill, c = colormap`,
+    );
+  report();
+  onKey = (e: KeyboardEvent): void => {
+    if (e.key === 'f') {
+      layer.draw = layer.draw === 'outline' ? 'fill' : 'outline';
+      report();
+    } else if (e.key === 'c') {
+      layer.colormap = layer.colormap.name === 'viridis' ? 'magma' : 'viridis';
+      report();
+    }
+  };
+  cleanup = (): void => {
+    onKey = null;
+  };
+}
+
 interface DemoDef {
   id: string;
   label: string;
@@ -277,6 +336,7 @@ const demoList: DemoDef[] = [
   { id: '5', label: '5 · Volume (3D)', run: demoVolume },
   { id: '6', label: '6 · Surface (3D mesh)', run: demoSurface },
   { id: '7', label: '7 · Scatter (3D points)', run: demoScatter3d },
+  { id: '8', label: '8 · Shapes (polygon rings)', run: demoShapes },
 ];
 
 const select = document.getElementById('demo') as HTMLSelectElement;

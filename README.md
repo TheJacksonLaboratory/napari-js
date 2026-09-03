@@ -23,6 +23,10 @@ A browser-native, **WebGPU** rendering engine that ports the visualization model
 - **3D volume raymarching** — MIP, translucent, and iso-surface, with an orbit camera.
 - **Surface** — a 3D triangular mesh (napari's `Surface` layer) with per-vertex colormapping and
   depth-tested flat shading, plus a `heightField` helper that turns a 2D image into a surface plot.
+- **Shapes** — closed polygon rings in 2D (napari's `Shapes` layer, rings only) from a flat
+  `coords` + `offsets` pair, drawn as 1-pixel boundaries or filled interiors and coloured by one
+  scalar per shape through a colormap — sized for the 10⁵–10⁶ cell outlines a segmentation
+  produces, with pure `ringsToOutline` / `ringsToFan` expanders.
 - **Readback**: displayed-pixel readout, PNG screenshot, and per-channel histograms.
 - **Host-friendly**: device-loss recovery, `ResizeObserver` auto-resize, and
   `canvasToWorld` / `worldToCanvas` / `visibleWorldRect` for overlays and picking.
