@@ -60,15 +60,69 @@ A layer's data is any `TextureSource` input: an `ImageBitmap`, a typed-array des
 
 ```bash
 npm install
-npm run dev          # serve the playground (dropdown: image · multi-channel · tiled · points+labels · volume · surface)
+npm run dev          # serve the playground (8 demos in the dropdown — see below)
 npm test             # GPU-free unit tests (Vitest)
 npm run test:coverage
 npm run typecheck && npm run lint && npm run format:check
 npm run build        # library bundle + types → dist/
 ```
 
-`npm run dev` serves `index.html` → `playground/main.ts`. Pick a demo from the dropdown to
-verify each render path; if WebGPU is unavailable the page shows the reason instead of crashing.
+`npm run dev` serves `index.html` → `playground/main.ts`. Pick a demo from the dropdown (or press
+its number key) to verify each render path; if WebGPU is unavailable the page shows the reason
+instead of crashing. The status line along the bottom reports what is on screen — vertex counts,
+slice index, active mode — and the per-demo keys.
+
+### The demos
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/images/playground-1-image.png" alt="napari-js playground: a scalar image rendered through the viridis colormap" />
+      <br /><sub><b>1 · Image + colormap</b> — a single-channel image through a scalar colormap. Drag pans, the wheel zooms, <code>c</code> cycles the colormap.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/images/playground-2-multichannel.png" alt="napari-js playground: three fluorescence channels composited additively" />
+      <br /><sub><b>2 · Multi-channel additive</b> — three overlapping blobs as red / green / blue tinted image layers, composited on the GPU with additive blending.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/images/playground-3-tiled.png" alt="napari-js playground: a tiled 16384-square pyramid with a z-stack" />
+      <br /><sub><b>3 · Tiled + z-stack</b> — a 16384² pyramid served as tiles, picking a level from the camera; <code>↑</code>/<code>↓</code> step through the 8 slices.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/images/playground-4-points-labels.png" alt="napari-js playground: a points layer and a label image over an image" />
+      <br /><sub><b>4 · Points + Labels</b> — a <code>PointsLayer</code> and a <code>LabelsLayer</code> over an image, with click-to-pick.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/images/playground-5-volume.png" alt="napari-js playground: a 3D volume raymarch under an orbit camera" />
+      <br /><sub><b>5 · Volume (3D)</b> — fragment raymarch under the orbit camera. <code>m</code>/<code>t</code>/<code>i</code> switch MIP, translucent DVR and iso-surface.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/images/playground-6-surface.png" alt="napari-js playground: a 3D triangular mesh coloured by height" />
+      <br /><sub><b>6 · Surface (3D mesh)</b> — 19,200 vertices / 37,842 triangles from <code>heightField</code>, coloured per-vertex; <code>w</code> toggles wireframe.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/images/playground-7-scatter3d.png" alt="napari-js playground: 4000 points as screen-facing billboards in 3D" />
+      <br /><sub><b>7 · Scatter (3D points)</b> — 4,000 depth-tested billboards coloured by a per-point scalar.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/images/playground-8-shapes-outline.png" alt="napari-js playground: 2400 polygon ring outlines over an image" />
+      <br /><sub><b>8 · Shapes — outline</b> — 2,400 rings × 16 vertices as a line-list, 76,800 vertices. One device pixel wide at any zoom: WebGPU has no line width.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/images/playground-8-shapes-fill.png" alt="napari-js playground: the same 2400 polygon rings filled and colourmapped" />
+      <br /><sub><b>8 · Shapes — fill</b> — the same rings as centroid fans, 115,200 vertices, each coloured by <b>one scalar per shape</b> through the colormap. <code>f</code> switches mode, <code>c</code> recolours.</sub>
+    </td>
+    <td width="50%"></td>
+  </tr>
+</table>
 
 ## What this is
 
