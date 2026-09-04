@@ -12,6 +12,7 @@ import { VolumeLayer, type VolumeLayerOptions } from './layers/volume-layer';
 import { AxesLayer, type AxesLayerOptions } from './layers/axes-layer';
 import { SurfaceLayer, type SurfaceLayerOptions } from './layers/surface-layer';
 import { Points3DLayer, type Points3DLayerOptions } from './layers/points3d-layer';
+import { ShapesLayer, type ShapesLayerOptions } from './layers/shapes-layer';
 import type { Layer } from './layers/layer';
 import { toTextureSource, depthOf, type ImageInput } from './io/texture-source';
 import { worldViewport, type Rect } from './io/pyramid';
@@ -212,6 +213,24 @@ export class Viewer {
   /** Add a points (scatter) layer. Positions are `[x, y]` pairs in data coordinates. */
   addPoints(positions: Float32Array | number[][], opts: PointsLayerOptions = {}): PointsLayer {
     const layer = new PointsLayer(positions, opts);
+    this.model.layers.add(layer);
+    return layer;
+  }
+
+  /**
+   * Add a 2D polygon layer from flat rings: `coords` is `[x0,y0,x1,y1,…]` in data
+   * coordinates and `offsets` has `shapeCount + 1` vertex offsets, so shape `i` is
+   * `coords[2*offsets[i] .. 2*offsets[i+1])` and closes implicitly. Draws boundaries
+   * (`draw: 'outline'`, the default) or interiors (`'fill'`), optionally coloured by
+   * one scalar per shape through a colormap. Stays in 2D — unlike the volume/surface
+   * adders it does not switch `ndisplay`.
+   */
+  addShapes(
+    coords: Float32Array,
+    offsets: Uint32Array,
+    opts: ShapesLayerOptions = {},
+  ): ShapesLayer {
+    const layer = new ShapesLayer(coords, offsets, opts);
     this.model.layers.add(layer);
     return layer;
   }

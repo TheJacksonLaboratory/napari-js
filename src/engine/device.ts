@@ -41,9 +41,27 @@ export async function acquireDevice(
 
   const float32Filterable = adapter.features.has('float32-filterable');
   const requiredFeatures: GPUFeatureName[] = float32Filterable ? ['float32-filterable'] : [];
+  // Ask for the buffer sizes the adapter actually offers. `requestDevice` otherwise
+  // grants the SPEC DEFAULTS — 256 MiB per buffer and 128 MiB per storage binding —
+  // regardless of the hardware, and a layer that needs more (10^5–10^6 polygons, a
+  // large mesh) hits an ASYNCHRONOUS validation failure: the allocation is dropped,
+  // the buffer reads as zeros, and nothing throws. Requesting the adapter's own
+  // values can never exceed them, so this cannot fail on its own account.
+  const requiredLimits: Record<string, number> = {
+    maxBufferSize: adapter.limits.maxBufferSize,
+    maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+  };
 
   try {
-    const device = await adapter.requestDevice({ requiredFeatures });
+    let device: GPUDevice;
+    try {
+      device = await adapter.requestDevice({ requiredFeatures, requiredLimits });
+    } catch {
+      // Device acquisition is the one step that must not regress: if an
+      // implementation refuses the limits for a reason of its own, take the
+      // defaults rather than failing to open the viewer at all.
+      device = await adapter.requestDevice({ requiredFeatures });
+    }
     return { adapter, device, features: { float32Filterable } };
   } catch (cause) {
     throw new WebGPUUnsupportedError(
