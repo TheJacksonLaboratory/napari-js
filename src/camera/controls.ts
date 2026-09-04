@@ -1,11 +1,5 @@
 import type { Camera } from './camera';
-
-/** Wheel-zoom sensitivity: zoom multiplier per (normalized, clamped) wheel-delta unit, applied as
- *  exp(-delta * speed). Deliberately gentle; override via {@link CameraControlOptions}. */
-const DEFAULT_WHEEL_ZOOM_SPEED = 0.0015;
-/** Per-event wheel-delta clamp (after deltaMode normalization) so one big event / momentum tick
- *  can't zoom far in a single step. */
-const WHEEL_DELTA_CLAMP = 24;
+import { DEFAULT_WHEEL_ZOOM_SPEED, normalizedWheelDelta } from './wheel';
 /** Click-to-zoom multiplier (zoom in on a plain click; its reciprocal on a modifier/right click). */
 const DEFAULT_CLICK_ZOOM_FACTOR = 2;
 /** Pointer travel (CSS px) beyond which a press-release is a pan, not a click (so it won't zoom). */
@@ -93,14 +87,7 @@ export function attachCameraControls(
 
   const onWheel = (e: WheelEvent): void => {
     e.preventDefault();
-    // Normalize the wheel delta across devices (line/page deltaMode) and clamp per event so a
-    // high-resolution mouse wheel or trackpad momentum zooms smoothly instead of in large jumps.
-    let delta = e.deltaY;
-    if (e.deltaMode === 1)
-      delta *= 16; // lines → ~px
-    else if (e.deltaMode === 2) delta *= canvas.getBoundingClientRect().height || 800; // pages → ~px
-    delta = Math.max(-WHEEL_DELTA_CLAMP, Math.min(WHEEL_DELTA_CLAMP, delta));
-    zoomAbout(e.clientX, e.clientY, Math.exp(-delta * wheelSpeed));
+    zoomAbout(e.clientX, e.clientY, Math.exp(-normalizedWheelDelta(e, canvas) * wheelSpeed));
   };
 
   // Suppress the browser context menu so a right-click can zoom out.
