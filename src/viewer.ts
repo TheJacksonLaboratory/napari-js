@@ -31,9 +31,10 @@ export interface ViewerOptions {
   controls?: boolean;
   /** Observe the canvas with a ResizeObserver and redraw on size changes (default true). */
   autoResize?: boolean;
-  /** Wheel-zoom sensitivity (smaller = gentler); see {@link CameraControlOptions}. */
+  /** Wheel-zoom sensitivity (smaller = gentler), in BOTH 2D pan-zoom and the 3D orbit dolly;
+   *  see {@link DEFAULT_WHEEL_ZOOM_SPEED}. */
   wheelZoomSpeed?: number;
-  /** Click-to-zoom step (default 2× in / 0.5× out; 0 disables). */
+  /** Click-to-zoom step (default 2× in / 0.5× out; 0 disables). 2D only. */
   clickZoomFactor?: number;
 }
 
@@ -171,7 +172,7 @@ export class Viewer {
     this.detachControls?.();
     this.detachControls =
       nd === 3
-        ? attachOrbitControls(this.canvas, this.model.camera3d)
+        ? attachOrbitControls(this.canvas, this.model.camera3d, this.cameraControlOpts)
         : attachCameraControls(this.canvas, this.model.camera, this.cameraControlOpts);
   }
 
