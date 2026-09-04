@@ -40,7 +40,7 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
     let lo = u.window.x;
     let hi = u.window.y;
     let t = clamp((in.value - lo) / max(hi - lo, 1e-6), 0.0, 1.0);
-    let g = pow(t, 1.0 / max(u.window.z, 1e-6));
+    let g = pow(t, u.window.z);
     rgb = textureSampleLevel(lut, lutSampler, vec2<f32>(g, 0.5), 0.0).rgb;
   }
   let a = u.extra.x * opacity;

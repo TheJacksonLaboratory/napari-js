@@ -118,7 +118,7 @@ slice index, active mode — and the per-demo keys.
   <tr>
     <td width="50%">
       <img src="docs/images/playground-8-shapes-fill.png" alt="napari-js playground: the same 2400 polygon rings filled and colourmapped" />
-      <br /><sub><b>8 · Shapes — fill</b> — the same rings as centroid fans, 115,200 vertices, each coloured by <b>one scalar per shape</b> through the colormap. <code>f</code> switches mode, <code>c</code> recolours.</sub>
+      <br /><sub><b>8 · Shapes — fill</b> — the same rings as triangle fans, 115,200 vertices, each coloured by <b>one scalar per shape</b> through the colormap. <code>f</code> switches mode, <code>c</code> recolours.</sub>
     </td>
     <td width="50%"></td>
   </tr>

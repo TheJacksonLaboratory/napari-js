@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   ShapesLayer,
+  polygonKernelPoint,
   ringsToOutline,
   ringsToFan,
   shapeVertexCount,
@@ -175,5 +176,138 @@ describe('ShapesLayer', () => {
     expect(b?.min).toEqual([0, 0]);
     expect(b?.max).toEqual([14, 14]);
     expect(new ShapesLayer(new Float32Array(0), new Uint32Array([0])).bounds()).toBeNull();
+  });
+});
+
+describe('fan apex', () => {
+  /** Even-odd ray cast, so a test can say whether the apex is really inside. */
+  const inside = (ring: number[], px: number, py: number): boolean => {
+    const n = ring.length / 2;
+    let c = false;
+    for (let i = 0; i < n; i++) {
+      const x1 = ring[i * 2];
+      const y1 = ring[i * 2 + 1];
+      const x2 = ring[((i + 1) % n) * 2];
+      const y2 = ring[((i + 1) % n) * 2 + 1];
+      if (y1 > py !== y2 > py && px < ((x2 - x1) * (py - y1)) / (y2 - y1) + x1) c = !c;
+    }
+    return c;
+  };
+
+  // Star-convex (its kernel contains (2, 0.5)) but its VERTEX MEAN, (2, 1.8),
+  // lies outside the ring — so a fan from the mean covers exterior pixels.
+  const DART = [0, 0, 4, 0, 4, 4, 2, 1, 0, 4];
+
+  it('finds a point inside a star-convex ring whose mean is outside it', () => {
+    const coords = Float32Array.from(DART);
+    const mean: [number, number] = [
+      DART.filter((_, i) => i % 2 === 0).reduce((a, b) => a + b, 0) / 5,
+      DART.filter((_, i) => i % 2 === 1).reduce((a, b) => a + b, 0) / 5,
+    ];
+    expect(mean).toEqual([2, 1.8]);
+    expect(inside(DART, ...mean)).toBe(false); // the bug this guards against
+
+    const apex = polygonKernelPoint(coords, 0, 5)!;
+    expect(apex).not.toBeNull();
+    expect(inside(DART, apex[0], apex[1])).toBe(true);
+  });
+
+  it('fans from that point, so no triangle leaves the ring', () => {
+    const coords = Float32Array.from(DART);
+    const { positions, count } = ringsToFan(coords, new Uint32Array([0, 5]));
+    expect(count).toBe(15); // 5 triangles
+    // Every triangle's apex is the same interior point, not the mean.
+    for (let tri = 0; tri < 5; tri++) {
+      const ax = positions[tri * 6];
+      const ay = positions[tri * 6 + 1];
+      expect(inside(DART, ax, ay)).toBe(true);
+    }
+  });
+
+  it('still uses the centre of a convex ring', () => {
+    // For a convex ring every interior point works, and the kernel is the ring
+    // itself — so the apex stays where it always was.
+    const square = Float32Array.from([0, 0, 2, 0, 2, 2, 0, 2]);
+    const apex = polygonKernelPoint(square, 0, 4)!;
+    expect(apex[0]).toBeCloseTo(1, 6);
+    expect(apex[1]).toBeCloseTo(1, 6);
+  });
+
+  it('reports no apex for a ring that is not star-convex', () => {
+    // A zig-zag "comb": no single point sees every vertex, so no fan can be
+    // exact and the caller has to know that.
+    const comb = Float32Array.from([0, 0, 6, 0, 6, 6, 4, 1, 3, 6, 2, 1, 0, 6]);
+    expect(polygonKernelPoint(comb, 0, 7)).toBeNull();
+    // It still draws — visibly overlapping — rather than being dropped.
+    expect(ringsToFan(comb, new Uint32Array([0, 7])).count).toBe(21);
+  });
+
+  it('reports no apex for a degenerate ring', () => {
+    const line = Float32Array.from([0, 0, 1, 1, 2, 2]);
+    expect(polygonKernelPoint(line, 0, 3)).toBeNull();
+    expect(polygonKernelPoint(line, 0, 2)).toBeNull();
+  });
+
+  it('finds an apex whichever way the ring is wound', () => {
+    // Interior is left of each edge for CCW and right for CW; both must work.
+    const ccw = Float32Array.from([0, 0, 4, 0, 4, 4, 2, 1, 0, 4]);
+    const cw = Float32Array.from([0, 4, 2, 1, 4, 4, 4, 0, 0, 0]);
+    expect(polygonKernelPoint(ccw, 0, 5)).not.toBeNull();
+    expect(polygonKernelPoint(cw, 0, 5)).not.toBeNull();
+  });
+});
+
+describe('ShapesLayer contract', () => {
+  const SQUARE = new Float32Array([0, 0, 2, 0, 2, 2, 0, 2]);
+  const ONE = new Uint32Array([0, 4]);
+
+  it('rejects offsets that are not a valid prefix sum', () => {
+    // `[0, 99, 7]` ends in bounds while its middle entry runs past `coords`, so
+    // checking only the last offset let the expansion read past the array and
+    // emit NaN positions.
+    expect(() => new ShapesLayer(SQUARE, new Uint32Array([0, 99, 7]))).toThrow(/nondecreasing/);
+    expect(() => new ShapesLayer(SQUARE, new Uint32Array([1, 4]))).toThrow(/must start at 0/);
+  });
+
+  it('re-derives an AUTOMATIC contrast window when the values change', () => {
+    // Without this, a layer built with no values keeps [0, 1] and assigning
+    // [10, 20] clamps every shape to the LUT's top entry.
+    const layer = new ShapesLayer(SQUARE, ONE);
+    expect(layer.contrastLimits).toEqual([0, 1]);
+    layer.values = new Float32Array([10]);
+    expect(layer.contrastLimits).toEqual([10, 11]);
+    layer.values = new Float32Array([4]);
+    expect(layer.contrastLimits).toEqual([4, 5]);
+  });
+
+  it('keeps an EXPLICIT contrast window when the values change', () => {
+    const layer = new ShapesLayer(SQUARE, ONE, { contrastLimits: [0, 100] });
+    layer.values = new Float32Array([7]);
+    expect(layer.contrastLimits).toEqual([0, 100]);
+
+    // And a window set later is explicit from then on.
+    const auto = new ShapesLayer(SQUARE, ONE, { values: new Float32Array([1]) });
+    auto.contrastLimits = [0, 50];
+    auto.values = new Float32Array([9]);
+    expect(auto.contrastLimits).toEqual([0, 50]);
+  });
+
+  it('hands out a COPY of the contrast window', () => {
+    // Returning the internal tuple lets a caller change what is rendered without
+    // emitting `changed`, so the visual never learns to redraw.
+    const layer = new ShapesLayer(SQUARE, ONE, { contrastLimits: [1, 2] });
+    layer.contrastLimits[0] = 999;
+    expect(layer.contrastLimits).toEqual([1, 2]);
+  });
+
+  it('ignores a non-positive gamma, as every other layer does', () => {
+    // Zero collapses the whole normalised range and a negative value inverts it.
+    const layer = new ShapesLayer(SQUARE, ONE, { gamma: 2 });
+    layer.gamma = 0;
+    expect(layer.gamma).toBe(2);
+    layer.gamma = -1;
+    expect(layer.gamma).toBe(2);
+    layer.gamma = 0.5;
+    expect(layer.gamma).toBe(0.5);
   });
 });

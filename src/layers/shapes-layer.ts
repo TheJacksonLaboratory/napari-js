@@ -94,13 +94,109 @@ export function ringsToOutline(coords: Float32Array, offsets: Uint32Array): Shap
 }
 
 /**
- * Rings → a triangle-list fan around each ring's centroid.
+ * A point that sees every vertex of a ring — the apex a fan must start from.
  *
- * A ring of n vertices yields n triangles, each `(centroid, vᵢ, vᵢ₊₁)`, and 3n
- * vertices. This is exact for **star-convex** rings — which cell and nucleus
- * boundaries are — and self-overlaps on a ring that folds back past its own
- * centroid (a lobed tissue-region annotation); such shapes need a general
- * triangulation, which this deliberately is not.
+ * The vertex mean is NOT such a point in general. `[(0,0), (4,0), (4,4), (2,1),
+ * (0,4)]` is star-convex (its kernel contains (2, 0.5)) yet its mean, (2, 1.8),
+ * lies OUTSIDE the ring — so a fan from the mean covers exterior pixels and
+ * overlaps itself. The mean is only guaranteed to work for CONVEX rings, where
+ * every interior point sees everything.
+ *
+ * So the apex is taken from the ring's KERNEL: the intersection of the interior
+ * half-planes of its edges, which is convex by construction and non-empty exactly
+ * when the ring is star-convex. Built by clipping the ring's bounding box against
+ * each edge in turn (Sutherland–Hodgman), then taking the centroid of what
+ * survives — that centroid is in the kernel because the kernel is convex.
+ *
+ * Null when the kernel is empty, i.e. the ring is not star-convex and no single
+ * apex can triangulate it.
+ *
+ * O(n · k) for a ring of n edges and a kernel of k vertices, both small for a
+ * segmentation boundary (10–50 vertices).
+ */
+export function polygonKernelPoint(
+  coords: Float32Array,
+  start: number,
+  n: number,
+): [number, number] | null {
+  if (n < 3) return null;
+  // Orientation decides which side of an edge is "interior".
+  let area2 = 0;
+  for (let i = 0; i < n; i++) {
+    const a = (start + i) * 2;
+    const b = (start + ((i + 1) % n)) * 2;
+    area2 += coords[a] * coords[b + 1] - coords[b] * coords[a + 1];
+  }
+  if (area2 === 0) return null; // degenerate: no interior to find a point in
+  const ccw = area2 > 0;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const x = coords[(start + i) * 2];
+    const y = coords[(start + i) * 2 + 1];
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  // Start from the bounding box; every half-plane can only shrink it.
+  let region: number[] = [minX, minY, maxX, minY, maxX, maxY, minX, maxY];
+
+  for (let i = 0; i < n && region.length >= 6; i++) {
+    const ax = coords[(start + i) * 2];
+    const ay = coords[(start + i) * 2 + 1];
+    const bx = coords[(start + ((i + 1) % n)) * 2];
+    const by = coords[(start + ((i + 1) % n)) * 2 + 1];
+    // Signed side of the directed edge a→b; interior is left for CCW rings.
+    const side = (px: number, py: number): number => {
+      const s = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+      return ccw ? s : -s;
+    };
+    const out: number[] = [];
+    const m = region.length / 2;
+    for (let k = 0; k < m; k++) {
+      const px = region[k * 2];
+      const py = region[k * 2 + 1];
+      const qx = region[((k + 1) % m) * 2];
+      const qy = region[((k + 1) % m) * 2 + 1];
+      const sp = side(px, py);
+      const sq = side(qx, qy);
+      if (sp >= 0) out.push(px, py);
+      // Crossing the boundary: keep the intersection point.
+      if ((sp > 0 && sq < 0) || (sp < 0 && sq > 0)) {
+        const tt = sp / (sp - sq);
+        out.push(px + (qx - px) * tt, py + (qy - py) * tt);
+      }
+    }
+    region = out;
+  }
+  if (region.length < 6) return null;
+
+  let cx = 0;
+  let cy = 0;
+  const m = region.length / 2;
+  for (let k = 0; k < m; k++) {
+    cx += region[k * 2];
+    cy += region[k * 2 + 1];
+  }
+  // The kernel is convex, so the mean of its vertices is inside it.
+  return [cx / m, cy / m];
+}
+
+/**
+ * Rings → a triangle-list fan around a point inside each ring.
+ *
+ * A ring of n vertices yields n triangles, each `(apex, vᵢ, vᵢ₊₁)`, and 3n
+ * vertices. The apex comes from {@link polygonKernelPoint}, so the fan is exact
+ * for every **star-convex** ring — which cell and nucleus boundaries are.
+ *
+ * A ring whose kernel is empty is not star-convex at all (a lobed tissue-region
+ * annotation, say): no single apex can triangulate it, and it needs a general
+ * triangulation, which this deliberately is not. Such a ring falls back to the
+ * vertex mean and may self-overlap — visibly wrong rather than silently dropped.
  *
  * Pure and GPU-free.
  */
@@ -113,14 +209,23 @@ export function ringsToFan(coords: Float32Array, offsets: Uint32Array): ShapeGeo
     const start = offsets[s];
     const n = offsets[s + 1] - start;
     if (n < 3) continue;
-    let cx = 0;
-    let cy = 0;
-    for (let i = 0; i < n; i++) {
-      cx += coords[(start + i) * 2];
-      cy += coords[(start + i) * 2 + 1];
+    const kernel = polygonKernelPoint(coords, start, n);
+    let cx: number;
+    let cy: number;
+    if (kernel) {
+      [cx, cy] = kernel;
+    } else {
+      // Not star-convex: no apex works. The vertex mean keeps the shape roughly
+      // where it belongs instead of dropping it.
+      cx = 0;
+      cy = 0;
+      for (let i = 0; i < n; i++) {
+        cx += coords[(start + i) * 2];
+        cy += coords[(start + i) * 2 + 1];
+      }
+      cx /= n;
+      cy /= n;
     }
-    cx /= n;
-    cy /= n;
     for (let i = 0; i < n; i++) {
       const a = start + i;
       const b = start + ((i + 1) % n);
@@ -177,6 +282,9 @@ export class ShapesLayer extends Layer {
   private _color: RGBA;
   private _colormap: Colormap;
   private _contrastLimits: [number, number];
+  /** False while the window is DERIVED from the values, so replacing them has to
+   *  re-derive it; true once a caller has set one, which must then be respected. */
+  private _contrastExplicit: boolean;
   private _gamma: number;
 
   constructor(coords: Float32Array, offsets: Uint32Array, opts: ShapesLayerOptions = {}) {
@@ -186,6 +294,20 @@ export class ShapesLayer extends Layer {
     }
     if (offsets.length < 1) {
       throw new Error('ShapesLayer: offsets must have at least one entry (shapeCount + 1)');
+    }
+    // Checking only the LAST offset is not enough: `[0, 99, 7]` ends in bounds
+    // while its middle entry runs past `coords`, and the expansion would then read
+    // uninitialised memory and emit NaN positions rather than throwing.
+    if (offsets[0] !== 0) {
+      throw new Error(`ShapesLayer: offsets must start at 0, got ${offsets[0]}`);
+    }
+    for (let i = 1; i < offsets.length; i++) {
+      if (offsets[i] < offsets[i - 1]) {
+        throw new Error(
+          `ShapesLayer: offsets must be nondecreasing, but offsets[${i}] = ${offsets[i]} ` +
+            `is less than offsets[${i - 1}] = ${offsets[i - 1]}`,
+        );
+      }
     }
     const last = offsets[offsets.length - 1];
     if (last * 2 > coords.length) {
@@ -205,6 +327,7 @@ export class ShapesLayer extends Layer {
     this._values = opts.values ?? null;
     this._color = opts.color ?? [1, 1, 1, 1];
     this._colormap = resolveColormap(opts.colormap ?? 'viridis');
+    this._contrastExplicit = opts.contrastLimits !== undefined;
     this._contrastLimits = opts.contrastLimits ?? valueRange(this._values);
     this._gamma = opts.gamma ?? 1;
     if (opts.opacity !== undefined) this._opacity = opts.opacity;
@@ -234,6 +357,10 @@ export class ShapesLayer extends Layer {
       );
     }
     this._values = value;
+    // A window that was derived from the OLD values describes nothing about the
+    // new ones: a layer built without values keeps [0, 1], and assigning [10, 20]
+    // would then clamp every shape to the LUT's top entry.
+    if (!this._contrastExplicit) this._contrastLimits = valueRange(value);
     this.valueVersion++;
     this.changed.emit(this);
   }
@@ -256,9 +383,13 @@ export class ShapesLayer extends Layer {
   }
 
   get contrastLimits(): [number, number] {
-    return this._contrastLimits;
+    // A copy, as every other layer returns: handing out the internal tuple lets
+    // `layer.contrastLimits[0] = x` change what is rendered without emitting
+    // `changed`, so the visual never learns to redraw.
+    return [this._contrastLimits[0], this._contrastLimits[1]];
   }
   set contrastLimits(value: readonly [number, number]) {
+    this._contrastExplicit = true;
     this._contrastLimits = [value[0], value[1]];
     this.changed.emit(this);
   }
@@ -267,7 +398,10 @@ export class ShapesLayer extends Layer {
     return this._gamma;
   }
   set gamma(value: number) {
-    this._gamma = value;
+    // Non-positive gamma is rejected, as on every other layer: zero collapses the
+    // whole normalised range and a negative value inverts it, so the previous
+    // valid setting is kept instead.
+    this._gamma = value > 0 ? value : this._gamma;
     this.changed.emit(this);
   }
 

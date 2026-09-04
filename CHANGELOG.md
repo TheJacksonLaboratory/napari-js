@@ -19,11 +19,14 @@ All notable changes to napari-js are documented here. The format roughly follows
   colour without the caller expanding anything per vertex. `values` and `positions` live in
   separate vertex buffers: recolouring rewrites the smaller one and leaves 10⁶ positions untouched.
 
-  The expansion is two **pure, GPU-free** functions — `ringsToOutline` and `ringsToFan`, plus
-  `shapeVertexCount` to size a buffer before paying for it — following `heightField`'s precedent
-  and unit-tested the same way. The fan is exact for **star-convex** rings, which cell and nucleus
-  boundaries are; a ring that folds past its own centroid needs a general triangulation, which this
-  is not. WebGPU has no line width, so an outline is one device pixel at any zoom.
+  The expansion is **pure, GPU-free** — `ringsToOutline`, `ringsToFan` and `polygonKernelPoint`,
+  plus `shapeVertexCount` to size a buffer before paying for it — following `heightField`'s
+  precedent and unit-tested the same way. The fan is exact for every **star-convex** ring, which
+  cell and nucleus boundaries are: its apex comes from the ring's KERNEL (the intersection of its
+  edges' interior half-planes) rather than from the vertex mean, which is only guaranteed to lie
+  inside a CONVEX ring. A ring with an empty kernel is not star-convex at all and needs a general
+  triangulation, which this is not; it falls back to the mean and may self-overlap. WebGPU has no
+  line width, so an outline is one device pixel at any zoom.
 
   Measured before it was written: 2.4 M edges draw in ~3.5 ms and 24 M in ~7 ms, and filled cells
   are cheaper than outlines. Playground demo **8** exercises both modes over an image.
