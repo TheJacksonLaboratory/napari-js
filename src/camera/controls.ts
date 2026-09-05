@@ -61,17 +61,38 @@ export function attachCameraControls(
   let anchorY = 0;
   let lastFrameMs = 0;
   let frame: number | null = null;
-  // What we last set the zoom to, so a fit() or a host moving the camera mid-flight is detected
-  // and yielded to rather than fought over.
+  // What we last left the camera at, so a fit() or a host moving it mid-flight is detected and
+  // yielded to rather than fought over. Both parts matter: watching the zoom alone misses a host
+  // pan, or a fit() that happens to land on the current zoom, and the animation would then re-centre
+  // every frame to hold its stale anchor and drag the view off where the host just put it.
   let appliedZoom = 0;
+  let appliedCenterX = 0;
+  let appliedCenterY = 0;
+
+  const rememberApplied = (): void => {
+    appliedZoom = camera.zoom;
+    [appliedCenterX, appliedCenterY] = camera.center;
+  };
+
+  /** Whether the camera has moved by any hand other than this animator's. */
+  const takenOver = (): boolean => {
+    const [cx, cy] = camera.center;
+    const drifted = (a: number, b: number): boolean =>
+      Math.abs(a - b) > Math.max(1, Math.abs(b)) * 1e-9;
+    return (
+      drifted(camera.zoom, appliedZoom) ||
+      drifted(cx, appliedCenterX) ||
+      drifted(cy, appliedCenterY)
+    );
+  };
 
   const animatable = (): boolean => smoothingMs > 0 && typeof requestAnimationFrame === 'function';
 
   const step = (): void => {
     frame = null;
     if (!targetZoom) return;
-    if (Math.abs(camera.zoom - appliedZoom) > appliedZoom * 1e-9) {
-      targetZoom = 0; // someone else took the camera
+    if (takenOver()) {
+      targetZoom = 0;
       return;
     }
     // Timed off performance.now() rather than the frame callback's timestamp: the two are the
@@ -88,7 +109,7 @@ export function attachCameraControls(
     const done = Math.abs(remaining) < 1e-4;
     const logNext = done ? logTarget : logCurrent + remaining * smoothingAlpha(dt, smoothingMs);
     zoomAbout(anchorX, anchorY, Math.exp(logNext - logCurrent));
-    appliedZoom = camera.zoom;
+    rememberApplied();
     if (done) {
       targetZoom = 0;
       return;
@@ -111,7 +132,7 @@ export function attachCameraControls(
     targetZoom = (targetZoom || camera.zoom) * factor;
     if (frame === null) {
       lastFrameMs = performance.now();
-      appliedZoom = camera.zoom;
+      rememberApplied();
       frame = requestAnimationFrame(step);
     }
   };

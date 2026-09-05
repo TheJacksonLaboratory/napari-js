@@ -172,14 +172,32 @@ describe('animated wheel zoom', () => {
     expect(camera.zoom).toBeCloseTo(Math.exp(24 * 0.0012), 6);
   });
 
-  it('yields the camera when something else moves it mid-flight', () => {
-    // A fit(), or a host driving the camera, must not be fought over.
+  it('yields when something else changes the zoom mid-flight', () => {
+    // A fit(), or a host driving the camera, must not be fought over. Changing
+    // ONLY the zoom, so this pins the zoom half of the takeover check — moving
+    // the centre too would let the centre half cover for it.
     const { camera, wheel } = harness();
     wheel(-100);
     runFrames(1);
-    camera.set([0, 0], 5);
+    camera.set(camera.center, 5);
     runFrames(20);
     expect(camera.zoom).toBe(5);
+  });
+
+  it('yields when something else pans mid-flight, without moving the zoom', () => {
+    // A center-only change is just as much a takeover as a zoom change: a host
+    // pan, or a fit() that happens to land on the current zoom. Continuing to
+    // animate re-centres each frame to hold the stale wheel anchor, dragging the
+    // view away from where the host just put it.
+    const { camera, wheel } = harness();
+    wheel(-100, 700, 500);
+    runFrames(1);
+    const zoomWhenTakenOver = camera.zoom;
+    camera.center = [123, -456];
+    runFrames(20);
+    expect(camera.center[0]).toBe(123);
+    expect(camera.center[1]).toBe(-456);
+    expect(camera.zoom).toBe(zoomWhenTakenOver);
   });
 
   it('zooms out on a downward scroll', () => {
