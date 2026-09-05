@@ -36,6 +36,9 @@ export interface ViewerOptions {
   wheelZoomSpeed?: number;
   /** Click-to-zoom step (default 2× in / 0.5× out; 0 disables). 2D only. */
   clickZoomFactor?: number;
+  /** Ease zoom toward its target over this time constant in ms instead of jumping to it; 0 for
+   *  instant. See {@link DEFAULT_ZOOM_SMOOTHING_MS}. 2D only. */
+  zoomSmoothingMs?: number;
 }
 
 /**
@@ -70,6 +73,7 @@ export class Viewer {
     this.autoResize = options.autoResize ?? true;
     this.cameraControlOpts = {
       wheelZoomSpeed: options.wheelZoomSpeed,
+      zoomSmoothingMs: options.zoomSmoothingMs,
       clickZoomFactor: options.clickZoomFactor,
     };
     this.ready = this.init();

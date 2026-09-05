@@ -1,5 +1,6 @@
 import type { Camera } from './camera';
 import { DEFAULT_WHEEL_ZOOM_SPEED, normalizedWheelDelta } from './wheel';
+import { DEFAULT_ZOOM_SMOOTHING_MS, smoothingAlpha } from './zoom-smoothing';
 /** Click-to-zoom multiplier (zoom in on a plain click; its reciprocal on a modifier/right click). */
 const DEFAULT_CLICK_ZOOM_FACTOR = 2;
 /** Pointer travel (CSS px) beyond which a press-release is a pan, not a click (so it won't zoom). */
@@ -10,6 +11,11 @@ export interface CameraControlOptions {
   wheelZoomSpeed?: number;
   /** Click-to-zoom step (default 2× in / 0.5× out). Set 0 to disable click-to-zoom. */
   clickZoomFactor?: number;
+  /**
+   * Ease zoom toward its target over this time constant in ms, instead of jumping to it.
+   * See {@link DEFAULT_ZOOM_SMOOTHING_MS}. Set 0 to apply zoom instantly.
+   */
+  zoomSmoothingMs?: number;
 }
 
 /**
@@ -25,6 +31,7 @@ export function attachCameraControls(
 ): () => void {
   const wheelSpeed = opts.wheelZoomSpeed ?? DEFAULT_WHEEL_ZOOM_SPEED;
   const clickFactor = opts.clickZoomFactor ?? DEFAULT_CLICK_ZOOM_FACTOR;
+  const smoothingMs = opts.zoomSmoothingMs ?? DEFAULT_ZOOM_SMOOTHING_MS;
 
   let dragging = false;
   let lastX = 0;
@@ -44,6 +51,69 @@ export function attachCameraControls(
     const wy = cy + py / zoom;
     const newZoom = zoom * factor;
     camera.set([wx - px / newZoom, wy - py / newZoom], newZoom);
+  };
+
+  // Animated zoom. A wheel notch sets a TARGET and the camera eases toward it, rather than
+  // snapping there — which is the whole of the difference between this and OpenSeadragon, whose
+  // wheel feels smooth because every notch runs through a spring.
+  let targetZoom = 0; // 0 = idle
+  let anchorX = 0;
+  let anchorY = 0;
+  let lastFrameMs = 0;
+  let frame: number | null = null;
+  // What we last set the zoom to, so a fit() or a host moving the camera mid-flight is detected
+  // and yielded to rather than fought over.
+  let appliedZoom = 0;
+
+  const animatable = (): boolean => smoothingMs > 0 && typeof requestAnimationFrame === 'function';
+
+  const step = (): void => {
+    frame = null;
+    if (!targetZoom) return;
+    if (Math.abs(camera.zoom - appliedZoom) > appliedZoom * 1e-9) {
+      targetZoom = 0; // someone else took the camera
+      return;
+    }
+    // Timed off performance.now() rather than the frame callback's timestamp: the two are the
+    // same clock in a browser, but reading one clock throughout removes any chance of seeding
+    // from one and stepping with the other, which silently zeroes the first frame's delta.
+    const now = performance.now();
+    const dt = Math.max(0, now - lastFrameMs);
+    lastFrameMs = now;
+    const logCurrent = Math.log(camera.zoom);
+    const logTarget = Math.log(targetZoom);
+    const remaining = logTarget - logCurrent;
+    // Close enough that another frame would not be visible: land exactly, so repeated nudges
+    // cannot leave the zoom drifting a hair short of where the user aimed.
+    const done = Math.abs(remaining) < 1e-4;
+    const logNext = done ? logTarget : logCurrent + remaining * smoothingAlpha(dt, smoothingMs);
+    zoomAbout(anchorX, anchorY, Math.exp(logNext - logCurrent));
+    appliedZoom = camera.zoom;
+    if (done) {
+      targetZoom = 0;
+      return;
+    }
+    frame = requestAnimationFrame(step);
+  };
+
+  /** Zoom about a point, eased when smoothing is on and instantly otherwise. */
+  const zoomToward = (clientX: number, clientY: number, factor: number): void => {
+    if (!animatable()) {
+      zoomAbout(clientX, clientY, factor);
+      return;
+    }
+    // Anchor on the LATEST pointer position, as OpenSeadragon does — a burst of wheel events
+    // while the cursor moves should follow the cursor, not the first event's position.
+    anchorX = clientX;
+    anchorY = clientY;
+    // Compound onto the target in flight, so a fast scroll accumulates into one continuous
+    // movement instead of restarting from wherever the animation happens to have reached.
+    targetZoom = (targetZoom || camera.zoom) * factor;
+    if (frame === null) {
+      lastFrameMs = performance.now();
+      appliedZoom = camera.zoom;
+      frame = requestAnimationFrame(step);
+    }
   };
 
   const onPointerDown = (e: PointerEvent): void => {
@@ -81,13 +151,13 @@ export function attachCameraControls(
     // modifier zooms out; a plain left click zooms in. Skips when click-zoom is disabled.
     if (clickFactor > 0 && !moved && !(wasDragging && moved)) {
       const zoomOut = e.button === 2 || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey;
-      zoomAbout(e.clientX, e.clientY, zoomOut ? 1 / clickFactor : clickFactor);
+      zoomToward(e.clientX, e.clientY, zoomOut ? 1 / clickFactor : clickFactor);
     }
   };
 
   const onWheel = (e: WheelEvent): void => {
     e.preventDefault();
-    zoomAbout(e.clientX, e.clientY, Math.exp(-normalizedWheelDelta(e, canvas) * wheelSpeed));
+    zoomToward(e.clientX, e.clientY, Math.exp(-normalizedWheelDelta(e, canvas) * wheelSpeed));
   };
 
   // Suppress the browser context menu so a right-click can zoom out.
@@ -106,6 +176,7 @@ export function attachCameraControls(
     canvas.removeEventListener('pointerup', onPointerUp);
     canvas.removeEventListener('pointercancel', onPointerUp);
     canvas.removeEventListener('wheel', onWheel);
+    if (frame !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame);
     canvas.removeEventListener('contextmenu', onContextMenu);
   };
 }
