@@ -1,11 +1,22 @@
 import type { Camera3D } from './camera3d';
+import { DEFAULT_WHEEL_ZOOM_SPEED, normalizedWheelDelta } from './wheel';
+
+export interface OrbitControlOptions {
+  /** Wheel-dolly sensitivity (see {@link DEFAULT_WHEEL_ZOOM_SPEED}). Smaller = gentler. */
+  wheelZoomSpeed?: number;
+}
 
 /**
  * Attach orbit controls to a canvas. A pointer drag does `camera.dragMode` — rotate
  * (azimuth/elevation), pan (translate the target), or zoom (dolly) — and the wheel always
  * dollies. Returns a detach function.
  */
-export function attachOrbitControls(canvas: HTMLCanvasElement, camera: Camera3D): () => void {
+export function attachOrbitControls(
+  canvas: HTMLCanvasElement,
+  camera: Camera3D,
+  opts: OrbitControlOptions = {},
+): () => void {
+  const wheelSpeed = opts.wheelZoomSpeed ?? DEFAULT_WHEEL_ZOOM_SPEED;
   let dragging = false;
   let lastX = 0;
   let lastY = 0;
@@ -39,7 +50,9 @@ export function attachOrbitControls(canvas: HTMLCanvasElement, camera: Camera3D)
 
   const onWheel = (e: WheelEvent): void => {
     e.preventDefault();
-    camera.zoomBy(Math.exp(e.deltaY * 0.0015));
+    // Same normalization and clamp as the 2D wheel: this used the RAW deltaY, which made one
+    // Chrome mouse notch dolly 16% and one trackpad momentum tick dolly 1.8x.
+    camera.zoomBy(Math.exp(normalizedWheelDelta(e, canvas) * wheelSpeed));
   };
 
   canvas.addEventListener('pointerdown', onPointerDown);
