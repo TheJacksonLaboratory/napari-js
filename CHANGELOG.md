@@ -3,6 +3,57 @@
 All notable changes to napari-js are documented here. The format roughly follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.13.0]
+
+### Added
+
+- **`zoomSmoothingMs`** on `ViewerOptions` and `CameraControlOptions`. The 2D wheel now sets a
+  TARGET zoom and eases toward it over frames instead of jumping there on the event itself, which
+  is the whole of what made the wheel feel steppy next to OpenSeadragon on the same images — OSD
+  animates every notch through a spring. Set `0` for the previous instant behaviour.
+
+  Eased in LOG space, because zoom is multiplicative: 1x to 4x is the same perceptual distance as
+  4x to 16x, so easing the raw factor makes zoom-in crawl and zoom-out snap. OSD reaches the same
+  conclusion from the other direction — its zoom spring is the only one it constructs with
+  `exponential: true`. The default time constant of 90ms settles in about 415ms (an exponential
+  covers 99% in ln(100) time constants).
+
+  The cursor anchor is re-read on every event and held on every FRAME rather than only at the end,
+  so the point under the cursor stays under it for the whole animation and a burst of events while
+  the cursor moves follows the cursor. Events compound onto the target in flight instead of
+  restarting from wherever the animation has reached, so a fast scroll travels as far as a slow one
+  — which matters most on a trackpad, where one swipe is a burst.
+
+- **`wheelZoomSpeed` on the 3D orbit controls** (`OrbitControlOptions`). `ViewerOptions` documented
+  this but it never reached 3D: the viewer called `attachOrbitControls` with no options at all.
+
+- **`DEFAULT_WHEEL_ZOOM_SPEED`, `WHEEL_DELTA_CLAMP` and `DEFAULT_ZOOM_SMOOTHING_MS`** are exported,
+  so a host that wants to match the wheel to another renderer can derive its setting from the real
+  values rather than copying the numbers.
+
+### Changed
+
+- **Gentler wheel zoom.** One notch moved 3.67%, which compounds quickly on a trackpad; it is now
+  about 2.9%, roughly 24 notches to double rather than 19.
+
+- Wheel-delta normalization moved into `camera/wheel.ts`, shared by the 2D and 3D paths. It is not
+  specific to either: browsers report deltas in three units and the same physical gesture differs
+  by more than an order of magnitude between them — Chrome sends one ~100px event per notch,
+  Firefox reports line mode with a `deltaY` around 3, and a trackpad's momentum ticks reach several
+  hundred px.
+
+### Fixed
+
+- **The 3D wheel dolly was never normalized**, having been written against the raw `deltaY`. One
+  Chrome mouse notch dollied **16.18%** — about 4.4x the 2D wheel — a single trackpad momentum tick
+  dollied **1.82x**, and Firefox's line mode moved **0.45%**, so one gesture differed by 36x between
+  two browsers. It now shares the 2D path's normalization and clamp.
+
+- **The animated zoom yields the camera** when anything else moves it mid-flight. The first cut
+  watched the zoom only, so a host pan — or a `fit()` landing on the current zoom — was not
+  recognised, and the animation kept re-centring each frame to hold its stale anchor: setting
+  `camera.center = [123, -456]` mid-animation left the centre at 129.91.
+
 ## [0.12.0]
 
 ### Added

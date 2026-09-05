@@ -3,7 +3,7 @@
 A browser-native, **WebGPU** rendering engine that ports the visualization model of
 [napari](https://napari.org) (the Python multi-dimensional image viewer) to TypeScript.
 
-> **Status:** **published to npm — `npm install napari-js`** (latest: **v0.12.0**). napari-js
+> **Status:** **published to npm — `npm install napari-js`** (latest: **v0.13.0**). napari-js
 > implements the POC called for in
 > [jit-ui#102](https://github.com/TheJacksonLaboratory/jit-ui/issues/102) — a browser-based
 > napari shipped as a JS library. The renderer (NJ-0…NJ-5+) is complete and browser-verified,

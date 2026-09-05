@@ -18,6 +18,8 @@ export { Dims } from './scene/dims';
 export { Camera } from './camera/camera';
 export { Camera3D } from './camera/camera3d';
 export type { CameraDragMode } from './camera/camera3d';
+export { DEFAULT_WHEEL_ZOOM_SPEED, WHEEL_DELTA_CLAMP } from './camera/wheel';
+export { DEFAULT_ZOOM_SMOOTHING_MS } from './camera/zoom-smoothing';
 export { Layer } from './layers/layer';
 export type { BlendMode } from './layers/layer';
 export { ImageLayer } from './layers/image-layer';
