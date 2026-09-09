@@ -20,6 +20,9 @@ A browser-native, **WebGPU** rendering engine that ports the visualization model
 - **Tiled & pyramidal** large images with level-of-detail + an LRU GPU-tile cache, and
   **z-stacks** — fed by a pluggable `TextureSource` (typed arrays or `ImageBitmap` tiles).
 - **Points** (instanced SDF markers) and **Labels** (`uint8`/`uint16`/`uint32` ids, cyclic palette).
+- **3D points** with per-point colormapped values plus per-point **alpha and size** — enough to mute
+  a cloud and highlight a subset within a single layer and a single draw — and a `dataVersion` so
+  recolouring mutates the layer instead of replacing it.
 - **3D volume raymarching** — MIP, translucent, and iso-surface, with an orbit camera.
 - **Surface** — a 3D triangular mesh (napari's `Surface` layer) with per-vertex colormapping and
   depth-tested flat shading, plus a `heightField` helper that turns a 2D image into a surface plot.
@@ -30,6 +33,13 @@ A browser-native, **WebGPU** rendering engine that ports the visualization model
 - **Readback**: displayed-pixel readout, PNG screenshot, and per-channel histograms.
 - **Host-friendly**: device-loss recovery, `ResizeObserver` auto-resize, and
   `canvasToWorld` / `worldToCanvas` / `visibleWorldRect` for overlays and picking.
+- **3D projection & picking**: `viewer.projectPoints()` (or the pure `projectPoint` /
+  `projectPoints`) maps world coordinates to canvas CSS pixels under the orbit camera, and
+  `nearestProjectedIndex` hit-tests the result **front-most first**, so a tooltip agrees with what
+  the depth buffer actually drew. A host no longer reimplements the perspective divide.
+- **Explicit camera framing**: `fit3d: 'always' | 'once' | 'never'` on the viewer (or per add),
+  plus `fitToLayers()` over the union of every 3D layer and `resetFit3D()` — so building a scene
+  from several layers does not make the view jump.
 
 ## Install & use
 

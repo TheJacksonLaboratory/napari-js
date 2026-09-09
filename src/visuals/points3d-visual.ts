@@ -6,7 +6,7 @@ import { buildLut, LUT_SIZE } from '../color/lut';
 import { POINTS3D_SHADER } from './points3d-shader';
 import { blendStateFor } from './blend';
 
-const INSTANCE_STRIDE = POINTS3D_INSTANCE_FLOATS * 4; // [x,y,z,value] → 16 bytes
+const INSTANCE_STRIDE = POINTS3D_INSTANCE_FLOATS * 4; // [x,y,z,value,alpha,sizeScale] → 24 bytes
 const UNIFORM_FLOATS = 24; // mat4(16) + params vec4 + window vec4
 const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
 
@@ -29,6 +29,7 @@ export class Points3DVisual implements LayerVisual {
   private pipeline: GPURenderPipeline;
   private currentBlend: BlendMode;
   private lutVersion: number;
+  private dataVersion: number;
 
   constructor(
     private readonly device: GPUDevice,
@@ -61,8 +62,16 @@ export class Points3DVisual implements LayerVisual {
     this.lutSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 
     this.currentBlend = layer.blending;
+    this.dataVersion = layer.dataVersion;
     this.pipeline = this.buildPipeline(layer.blending);
     this.bindGroup = this.buildBindGroup();
+  }
+
+  /** Re-interleave and re-upload the instance data after the layer's values/alphas/sizes changed. */
+  private writeInstances(): void {
+    const data = this.layer.buildInstanceData();
+    if (data.byteLength === 0) return;
+    this.device.queue.writeBuffer(this.instanceBuffer, 0, data as GPUAllowSharedBufferSource);
   }
 
   private buildPipeline(blend: BlendMode): GPURenderPipeline {
@@ -78,6 +87,8 @@ export class Points3DVisual implements LayerVisual {
             attributes: [
               { shaderLocation: 0, offset: 0, format: 'float32x3' }, // position
               { shaderLocation: 1, offset: 12, format: 'float32' }, // value
+              { shaderLocation: 2, offset: 16, format: 'float32' }, // per-point alpha
+              { shaderLocation: 3, offset: 20, format: 'float32' }, // per-point size scale
             ],
           },
         ],
@@ -122,6 +133,12 @@ export class Points3DVisual implements LayerVisual {
     if (this.layer.colormapVersion !== this.lutVersion) {
       this.lutVersion = this.layer.colormapVersion;
       this.writeLut();
+    }
+    // The buffer is sized from the layer's count, which cannot change, so a data change is
+    // always a rewrite in place rather than a reallocation.
+    if (this.layer.dataVersion !== this.dataVersion) {
+      this.dataVersion = this.layer.dataVersion;
+      this.writeInstances();
     }
   }
 

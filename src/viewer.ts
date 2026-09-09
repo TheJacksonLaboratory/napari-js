@@ -10,10 +10,13 @@ import { PointsLayer, type PointsLayerOptions } from './layers/points-layer';
 import { LabelsLayer, type LabelsLayerOptions, type LabelData } from './layers/labels-layer';
 import { VolumeLayer, type VolumeLayerOptions } from './layers/volume-layer';
 import { AxesLayer, type AxesLayerOptions } from './layers/axes-layer';
-import { SurfaceLayer, type SurfaceLayerOptions } from './layers/surface-layer';
+import { SurfaceLayer, type SurfaceLayerOptions, type SurfaceBounds } from './layers/surface-layer';
 import { Points3DLayer, type Points3DLayerOptions } from './layers/points3d-layer';
 import { ShapesLayer, type ShapesLayerOptions } from './layers/shapes-layer';
 import type { Layer } from './layers/layer';
+import type { Fit3D } from './layers/layer';
+import { unionBounds, resolveFit, framingFor } from './scene/fit';
+import { projectPoints, type ProjectedPoints } from './picking/project';
 import { toTextureSource, depthOf, type ImageInput } from './io/texture-source';
 import { worldViewport, type Rect } from './io/pyramid';
 import type { Dims } from './scene/dims';
@@ -39,6 +42,8 @@ export interface ViewerOptions {
   /** Ease zoom toward its target over this time constant in ms instead of jumping to it; 0 for
    *  instant. See {@link DEFAULT_ZOOM_SMOOTHING_MS}. 2D only. */
   zoomSmoothingMs?: number;
+  /** Default framing policy for 3D adds; see {@link Fit3D}. Per-add `fit` overrides it. */
+  fit3d?: Fit3D;
 }
 
 /**
@@ -64,6 +69,8 @@ export class Viewer {
   private resizeObserver?: ResizeObserver;
   private frameScheduled = false;
   private firstImageFitted = false;
+  private readonly fit3dPolicy: Fit3D;
+  private fitted3d = false;
   private disposed = false;
 
   constructor(options: ViewerOptions) {
@@ -76,6 +83,7 @@ export class Viewer {
       zoomSmoothingMs: options.zoomSmoothingMs,
       clickZoomFactor: options.clickZoomFactor,
     };
+    this.fit3dPolicy = options.fit3d ?? 'always';
     this.ready = this.init();
   }
 
@@ -266,10 +274,12 @@ export class Viewer {
   ): VolumeLayer {
     const layer = new VolumeLayer(data, width, height, depth, opts);
     this.model.layers.add(layer);
-    // Frame the camera on the WORLD box (dims × voxelSize), not the raw voxel counts, so an
-    // anisotropic/downsampled volume is framed at its true rendered size.
-    const [sx, sy, sz] = layer.voxelSize;
-    this.model.camera3d.frame(width * sx, height * sy, depth * sz);
+    if (this.shouldFit3D(opts.fit)) {
+      // Frame the camera on the WORLD box (dims × voxelSize), not the raw voxel counts, so an
+      // anisotropic/downsampled volume is framed at its true rendered size.
+      const [sx, sy, sz] = layer.voxelSize;
+      this.model.camera3d.frame(width * sx, height * sy, depth * sz);
+    }
     this.model.dims.ndisplay = 3;
     return layer;
   }
@@ -289,9 +299,7 @@ export class Viewer {
   ): SurfaceLayer {
     const layer = new SurfaceLayer(vertices, faces, values, opts);
     this.model.layers.add(layer);
-    const b = layer.bounds();
-    this.model.camera3d.target = b.center;
-    this.model.camera3d.distance = Math.max(b.radius * 2.5, 1e-3);
+    if (this.shouldFit3D(opts.fit)) this.frameOn(layer.bounds());
     this.model.dims.ndisplay = 3;
     return layer;
   }
@@ -308,9 +316,7 @@ export class Viewer {
   ): Points3DLayer {
     const layer = new Points3DLayer(positions, values, opts);
     this.model.layers.add(layer);
-    const b = layer.bounds();
-    this.model.camera3d.target = b.center;
-    this.model.camera3d.distance = Math.max(b.radius * 2.5, 1e-3);
+    if (this.shouldFit3D(opts.fit)) this.frameOn(layer.bounds());
     this.model.dims.ndisplay = 3;
     return layer;
   }
@@ -355,6 +361,58 @@ export class Viewer {
     const { zoom } = this.model.camera;
     const [cx, cy] = this.model.camera.center;
     return worldViewport(cx, cy, zoom, vw, vh);
+  }
+
+  /**
+   * Frame the orbit camera on the union of every 3D layer that has bounds.
+   *
+   * The deliberate counterpart to {@link Fit3D}: with `once` or `never` the host decides
+   * when framing happens, and this is how it asks. Returns false when nothing 3D is
+   * mounted, so it is safe to call on a scene that is still loading.
+   */
+  fitToLayers(): boolean {
+    const b = unionBounds(this.model.layers);
+    if (!b) return false;
+    this.frameOn(b);
+    return true;
+  }
+
+  /**
+   * Let the next 3D add frame again under the `once` policy.
+   *
+   * Call it when the scene's subject changes — a new dataset, a cleared viewer — so the
+   * first add of the new scene frames while the rest of it leaves the pose alone.
+   */
+  resetFit3D(): void {
+    this.fitted3d = false;
+  }
+
+  /**
+   * Project world points to canvas CSS pixels under the current 3D camera.
+   *
+   * The convenience form of {@link projectPoints}: it supplies the live view-projection and
+   * the canvas size, which is what a host would otherwise have to assemble itself — and
+   * getting the viewport in CSS rather than device pixels wrong is the usual way an overlay
+   * ends up offset on a retina display. Null before the canvas has a size.
+   */
+  projectPoints(positions: Float32Array, out?: Partial<ProjectedPoints>): ProjectedPoints | null {
+    const vw = this.canvas.clientWidth || this.canvas.width;
+    const vh = this.canvas.clientHeight || this.canvas.height;
+    if (!vw || !vh) return null;
+    return projectPoints(this.model.camera3d.viewProjection(vw, vh), positions, vw, vh, out);
+  }
+
+  /** Whether this add should move the camera, recording that a framing happened. */
+  private shouldFit3D(override?: Fit3D): boolean {
+    if (!resolveFit(this.fit3dPolicy, override, this.fitted3d)) return false;
+    this.fitted3d = true;
+    return true;
+  }
+
+  private frameOn(b: SurfaceBounds): void {
+    const { target, distance } = framingFor(b);
+    this.model.camera3d.target = target;
+    this.model.camera3d.distance = distance;
   }
 
   private maybeFitFirst(width: number, height: number): void {
