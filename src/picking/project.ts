@@ -15,9 +15,9 @@
 
 /** Where a world point lands, and whether it is in front of the eye at all. */
 export interface ProjectedPoint {
-  /** CSS pixels from the canvas's left edge. Meaningless when `visible` is false. */
+  /** CSS pixels from the canvas's left edge; `NaN` when `visible` is false. */
   x: number;
-  /** CSS pixels from the canvas's TOP edge — screen convention, y down. */
+  /** CSS pixels from the canvas's TOP edge — screen convention, y down; `NaN` when hidden. */
   y: number;
   /**
    * Clip-space w, which under a standard perspective matrix is the distance along the view
@@ -56,7 +56,12 @@ export function projectPoint(
   const cw = mvp[3] * x + mvp[7] * y + mvp[11] * z + mvp[15];
   // `> 0` rather than `!== 0`: at or behind the eye the divide flips the sign and puts the
   // point on the opposite side of the screen, which is worse than reporting nothing.
-  if (!(cw > 0)) return { x: 0, y: 0, depth: NaN, visible: false };
+  //
+  // NaN rather than (0, 0), matching the batch contract below. (0, 0) is the canvas corner
+  // — a real position — so a caller that forgets to check `visible` would place an overlay
+  // there instead of hiding it, which is exactly the sentinel-coordinate failure the batch
+  // API uses NaN to avoid. Two functions in one module should not disagree about it.
+  if (!(cw > 0)) return { x: NaN, y: NaN, depth: NaN, visible: false };
   return {
     x: ((cx / cw) * 0.5 + 0.5) * vw,
     // NDC y points up and the screen's points down, so this is a flip, not a scale.

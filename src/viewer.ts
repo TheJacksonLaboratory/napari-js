@@ -15,7 +15,7 @@ import { Points3DLayer, type Points3DLayerOptions } from './layers/points3d-laye
 import { ShapesLayer, type ShapesLayerOptions } from './layers/shapes-layer';
 import type { Layer } from './layers/layer';
 import type { Fit3D } from './layers/layer';
-import { unionBounds, resolveFit, framingFor } from './scene/fit';
+import { unionBounds, Fit3DState, framingFor } from './scene/fit';
 import { projectPoints, type ProjectedPoints } from './picking/project';
 import { toTextureSource, depthOf, type ImageInput } from './io/texture-source';
 import { worldViewport, type Rect } from './io/pyramid';
@@ -69,8 +69,7 @@ export class Viewer {
   private resizeObserver?: ResizeObserver;
   private frameScheduled = false;
   private firstImageFitted = false;
-  private readonly fit3dPolicy: Fit3D;
-  private fitted3d = false;
+  private readonly fit3d: Fit3DState;
   private disposed = false;
 
   constructor(options: ViewerOptions) {
@@ -83,7 +82,7 @@ export class Viewer {
       zoomSmoothingMs: options.zoomSmoothingMs,
       clickZoomFactor: options.clickZoomFactor,
     };
-    this.fit3dPolicy = options.fit3d ?? 'always';
+    this.fit3d = new Fit3DState(options.fit3d ?? 'always');
     this.ready = this.init();
   }
 
@@ -369,11 +368,17 @@ export class Viewer {
    * The deliberate counterpart to {@link Fit3D}: with `once` or `never` the host decides
    * when framing happens, and this is how it asks. Returns false when nothing 3D is
    * mounted, so it is safe to call on a scene that is still loading.
+   *
+   * A successful fit COUNTS as the scene's framing. Otherwise, under `once`, framing here
+   * and then adding one more layer would reframe on that layer alone — silently undoing
+   * the union the host just asked for, which is the opposite of what an explicit call
+   * should do.
    */
   fitToLayers(): boolean {
     const b = unionBounds(this.model.layers);
     if (!b) return false;
     this.frameOn(b);
+    this.fit3d.markFitted();
     return true;
   }
 
@@ -384,7 +389,7 @@ export class Viewer {
    * first add of the new scene frames while the rest of it leaves the pose alone.
    */
   resetFit3D(): void {
-    this.fitted3d = false;
+    this.fit3d.reset();
   }
 
   /**
@@ -404,9 +409,7 @@ export class Viewer {
 
   /** Whether this add should move the camera, recording that a framing happened. */
   private shouldFit3D(override?: Fit3D): boolean {
-    if (!resolveFit(this.fit3dPolicy, override, this.fitted3d)) return false;
-    this.fitted3d = true;
-    return true;
+    return this.fit3d.claim(override);
   }
 
   private frameOn(b: SurfaceBounds): void {

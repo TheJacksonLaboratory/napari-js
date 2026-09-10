@@ -45,8 +45,7 @@ export class Points3DLayer extends Layer {
   readonly count: number;
   /** N×3 point positions in world/data coords, x-fastest. */
   readonly positions: Float32Array;
-  /** Per-point scalar (length N) mapped through the colormap. */
-  values: Float32Array;
+  private _values: Float32Array;
 
   colormapVersion = 0;
 
@@ -80,7 +79,7 @@ export class Points3DLayer extends Layer {
       throw new Error(`Points3D values length (${vals.length}) must equal point count (${n}).`);
     }
     this.positions = positions;
-    this.values = vals;
+    this._values = vals;
     this.count = n;
     this._alphas = checkLength(opts.alphas, n, 'alphas');
     this._sizes = checkLength(opts.sizes, n, 'sizes');
@@ -120,14 +119,20 @@ export class Points3DLayer extends Layer {
   }
 
   /**
-   * Replace the per-point scalars in place, keeping the geometry and the camera.
+   * Per-point scalar (length N) mapped through the colormap.
    *
-   * The point of the setter is that recolouring is not a new layer: same positions, same
-   * bounds, nothing for the camera to reframe.
+   * Read-only as a property and replaced through the setter, which is the whole point:
+   * a bare writable field lets `layer.values = next` succeed while `dataVersion` stays put,
+   * so the visual never re-uploads and the GPU keeps the old colours. Recolouring is not a
+   * new layer — same positions, same bounds, nothing for the camera to reframe — so this is
+   * the path that has to be safe.
    */
-  setValues(next: Float32Array): void {
+  get values(): Float32Array {
+    return this._values;
+  }
+  set values(next: Float32Array) {
     checkLength(next, this.count, 'values');
-    this.values = next;
+    this._values = next;
     this.dataVersion++;
     this.changed.emit(this);
   }
@@ -206,7 +211,7 @@ export class Points3DLayer extends Layer {
       out[o] = this.positions[i * 3];
       out[o + 1] = this.positions[i * 3 + 1];
       out[o + 2] = this.positions[i * 3 + 2];
-      out[o + 3] = this.values[i];
+      out[o + 3] = this._values[i];
       out[o + 4] = alphas ? alphas[i] : 1;
       out[o + 5] = sizes ? sizes[i] : 1;
     }

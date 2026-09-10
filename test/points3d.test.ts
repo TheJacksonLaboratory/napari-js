@@ -119,7 +119,7 @@ describe('Points3DLayer', () => {
       let emitted = 0;
       p.changed.connect(() => emitted++);
       const before = p.dataVersion;
-      p.setValues(new Float32Array([1, 2, 3]));
+      p.values = new Float32Array([1, 2, 3]);
       expect(p.dataVersion).toBe(before + 1);
       expect(emitted).toBe(1);
       expect(Array.from(p.buildInstanceData().subarray(3, 4))).toEqual([1]);
@@ -148,13 +148,26 @@ describe('Points3DLayer', () => {
     it('keeps the geometry, so the camera has nothing to reframe', () => {
       const p = new Points3DLayer(POS, VALS);
       const before = p.bounds();
-      p.setValues(new Float32Array([100, 200, 300]));
+      p.values = new Float32Array([100, 200, 300]);
       expect(p.bounds()).toEqual(before);
     });
 
     it('rejects a wrong-length scalar array', () => {
       const p = new Points3DLayer(POS, VALS);
-      expect(() => p.setValues(new Float32Array(2))).toThrow(/values/);
+      expect(() => {
+        p.values = new Float32Array(2);
+      }).toThrow(/values/);
+    });
+
+    it('cannot be replaced without bumping the version', () => {
+      // A plain writable field would let this assignment succeed while `dataVersion` stayed
+      // put — the visual would never re-upload, and the GPU would keep the old colours
+      // while `layer.values` reported the new ones. The accessor is what closes that.
+      const p = new Points3DLayer(POS, VALS);
+      const before = p.dataVersion;
+      p.values = new Float32Array([7, 8, 9]);
+      expect(p.dataVersion).toBe(before + 1);
+      expect(p.buildInstanceData()[3]).toBe(7);
     });
   });
 });

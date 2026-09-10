@@ -51,7 +51,7 @@ export type { ShapesLayerOptions, ShapeDraw, ShapeGeometry } from './layers/shap
 export { nearestPointIndex, nearestProjectedIndex } from './picking/pick';
 export { projectPoint, projectPoints } from './picking/project';
 export type { ProjectedPoint, ProjectedPoints } from './picking/project';
-export { unionBounds, resolveFit, framingFor } from './scene/fit';
+export { unionBounds, resolveFit, framingFor, Fit3DState } from './scene/fit';
 export type { Bounded } from './scene/fit';
 
 // Color

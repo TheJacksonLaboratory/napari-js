@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { unionBounds, resolveFit, framingFor } from '../src/scene/fit';
+import { unionBounds, resolveFit, framingFor, Fit3DState } from '../src/scene/fit';
 import { Points3DLayer } from '../src/layers/points3d-layer';
 import { VolumeLayer } from '../src/layers/volume-layer';
 import { ImageLayer } from '../src/layers/image-layer';
+import { ShapesLayer } from '../src/layers/shapes-layer';
 
 /**
  * When adding a 3D layer moves the camera.
@@ -77,6 +78,40 @@ describe('unionBounds', () => {
     expect(unionBounds([flat2d(), points, flat2d()])).toEqual(points.bounds());
   });
 
+  /**
+   * `bounds()` is not one contract across the layer tree.
+   *
+   * ShapesLayer has one too and it is 2D — and nullable. A guard that only checked for the
+   * METHOD accepted it: an empty ShapesLayer threw on `b.min[0]`, and a non-empty one
+   * contributed an `undefined` z that reached the camera as a NaN target.
+   */
+  describe('a layer whose bounds() is 2D', () => {
+    const triangle = () =>
+      new ShapesLayer(new Float32Array([0, 0, 1, 0, 1, 1]), new Uint32Array([0, 3]));
+
+    it('does not get a say in how a 3D scene is framed', () => {
+      const points = new Points3DLayer(CLOUD);
+      expect(unionBounds([triangle(), points])).toEqual(points.bounds());
+      expect(unionBounds([points, triangle()])).toEqual(points.bounds());
+    });
+
+    it('does not NaN the camera target when it comes first', () => {
+      // Order mattered: leading, it SEEDED the union, so `min[2]`/`max[2]` were undefined
+      // and the centre came out NaN. Trailing, its undefined z lost every comparison and
+      // the bug hid.
+      const u = unionBounds([triangle(), new Points3DLayer(CLOUD)])!;
+      expect(u.center.every(Number.isFinite)).toBe(true);
+      expect(u.min.every(Number.isFinite)).toBe(true);
+    });
+
+    it('does not throw when it is empty and returns null', () => {
+      const empty = new ShapesLayer(new Float32Array([]), new Uint32Array([0]));
+      expect(empty.bounds()).toBeNull();
+      expect(() => unionBounds([empty])).not.toThrow();
+      expect(unionBounds([empty])).toBeNull();
+    });
+  });
+
   it('gives a degenerate scene a usable radius', () => {
     // One point, or a perfectly flat sheet: a zero radius puts the camera at distance zero
     // and renders nothing.
@@ -97,5 +132,53 @@ describe('framingFor', () => {
   it('never returns a zero distance', () => {
     const f = framingFor({ min: [0, 0, 0], max: [0, 0, 0], center: [0, 0, 0], radius: 0 });
     expect(f.distance).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The framing state machine, which is where the glue bug lived.
+ *
+ * `resolveFit` was already right; what was wrong was that an explicit `fitToLayers()`
+ * moved the camera without recording that the scene had been framed.
+ */
+describe('Fit3DState', () => {
+  it('frames the first add and no later one, under `once`', () => {
+    const state = new Fit3DState('once');
+    expect(state.claim()).toBe(true);
+    expect(state.claim()).toBe(false);
+    expect(state.claim()).toBe(false);
+  });
+
+  it('frames every add under `always`', () => {
+    const state = new Fit3DState('always');
+    expect(state.claim()).toBe(true);
+    expect(state.claim()).toBe(true);
+  });
+
+  it('lets the next add frame again after a reset', () => {
+    const state = new Fit3DState('once');
+    state.claim();
+    state.reset();
+    expect(state.claim()).toBe(true);
+  });
+
+  it('counts an explicit fit, so the next add does not undo it', () => {
+    // The bug: fit the union, add one more layer, and that layer reframed on ITSELF —
+    // silently discarding the union the host had just asked for.
+    const state = new Fit3DState('once');
+    state.markFitted();
+    expect(state.claim()).toBe(false);
+  });
+
+  it('still lets an add frame when nothing has been fitted yet', () => {
+    const state = new Fit3DState('once');
+    expect(state.claim()).toBe(true);
+  });
+
+  it('does not let a `never` add consume the one framing `once` owes', () => {
+    // A host that mounts a hidden layer first would otherwise find its scene never framed.
+    const state = new Fit3DState('once');
+    expect(state.claim('never')).toBe(false);
+    expect(state.claim()).toBe(true);
   });
 });

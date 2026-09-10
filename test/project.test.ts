@@ -56,6 +56,26 @@ describe('projectPoint', () => {
       expect(Number.isNaN(p.depth)).toBe(true);
     }
   });
+
+  it('reports NaN coordinates when hidden, not the canvas corner', () => {
+    // (0, 0) is a REAL screen position — the top-left corner — so a caller that forgets to
+    // check `visible` would place an overlay there rather than hide it. That is the exact
+    // sentinel-coordinate failure the batch API uses NaN to avoid, and the two functions
+    // in this module must not disagree about it.
+    const hidden = projectPoint(PERSPECTIVE, [1, 1, -1], 800, 600);
+    expect(Number.isNaN(hidden.x)).toBe(true);
+    expect(Number.isNaN(hidden.y)).toBe(true);
+  });
+
+  it('agrees with the batch form about a hidden point', () => {
+    // The two used to disagree: one said (0, 0), the other NaN. `toEqual` compares NaN as
+    // equal to NaN, so this is a real assertion on both sides rather than on neither.
+    const one = projectPoint(PERSPECTIVE, [1, 1, -1], 800, 600);
+    const many = projectPoints(PERSPECTIVE, new Float32Array([1, 1, -1]), 800, 600);
+    expect([one.x, one.y]).toEqual([NaN, NaN]);
+    expect([many.screen[0], many.screen[1]]).toEqual([NaN, NaN]);
+    expect([one.x, one.y]).toEqual([many.screen[0], many.screen[1]]);
+  });
 });
 
 describe('projectPoints', () => {

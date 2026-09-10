@@ -15,8 +15,32 @@ export interface Bounded {
   bounds(): SurfaceBounds;
 }
 
-function isBounded(layer: unknown): layer is Bounded {
-  return typeof (layer as Bounded | null)?.bounds === 'function';
+/** Three finite numbers — the shape a 3D framing can actually be computed from. */
+function isVec3(v: unknown): v is [number, number, number] {
+  return (
+    Array.isArray(v) &&
+    v.length >= 3 &&
+    Number.isFinite(v[0]) &&
+    Number.isFinite(v[1]) &&
+    Number.isFinite(v[2])
+  );
+}
+
+/**
+ * A layer's 3D bounds, or null if it has none to give.
+ *
+ * The RESULT is checked, not just the presence of the method, because `bounds()` is not one
+ * contract across the layer tree: {@link ShapesLayer} has one too, and it returns 2D bounds
+ * — or null for an empty layer. A structural "has a bounds function" guard accepts it, and
+ * then an empty ShapesLayer throws on `b.min[0]` while a non-empty one contributes an
+ * `undefined` z that turns the camera target into NaN. A 2D layer has no say in how a 3D
+ * scene is framed, so it is skipped rather than coerced.
+ */
+function bounds3dOf(layer: unknown): SurfaceBounds | null {
+  if (typeof (layer as Bounded | null)?.bounds !== 'function') return null;
+  const b = (layer as Bounded).bounds();
+  if (!b || !isVec3(b.min) || !isVec3(b.max)) return null;
+  return b;
 }
 
 /**
@@ -30,8 +54,8 @@ export function unionBounds(layers: Iterable<unknown>): SurfaceBounds | null {
   let min: [number, number, number] | null = null;
   const max: [number, number, number] = [0, 0, 0];
   for (const layer of layers) {
-    if (!isBounded(layer)) continue;
-    const b = layer.bounds();
+    const b = bounds3dOf(layer);
+    if (!b) continue;
     if (!min) {
       min = [b.min[0], b.min[1], b.min[2]];
       max[0] = b.max[0];
@@ -69,6 +93,45 @@ export function resolveFit(policy: Fit3D, override: Fit3D | undefined, fitted: b
   if (effective === 'never') return false;
   if (effective === 'once' && fitted) return false;
   return true;
+}
+
+/**
+ * Whether a 3D scene has been framed yet, and who is allowed to frame it next.
+ *
+ * A class rather than a boolean on the viewer because the bug this replaces lived in the
+ * GLUE, not in {@link resolveFit}: an explicit `fitToLayers()` framed the scene without
+ * recording that it had, so under `once` the next add reframed on that layer alone and
+ * silently undid the union the host had just asked for. That is a sequence — reset, fit,
+ * add — and a sequence can only be tested if the state it walks through is reachable
+ * without a canvas and a GPU.
+ */
+export class Fit3DState {
+  private fitted = false;
+
+  constructor(private readonly policy: Fit3D) {}
+
+  /**
+   * Whether this add should frame, recording it when it does.
+   *
+   * Only a real framing counts: a `never` add must not consume the one framing a later
+   * `once` add is waiting for, or a host that mounts a hidden layer first would find its
+   * scene never framed at all.
+   */
+  claim(override?: Fit3D): boolean {
+    if (!resolveFit(this.policy, override, this.fitted)) return false;
+    this.fitted = true;
+    return true;
+  }
+
+  /** Record a framing the host performed itself, so `once` does not grant another. */
+  markFitted(): void {
+    this.fitted = true;
+  }
+
+  /** Let the next add frame again — the scene's subject has changed. */
+  reset(): void {
+    this.fitted = false;
+  }
 }
 
 /** Camera target and distance for a box — the framing itself, separated from the decision. */
