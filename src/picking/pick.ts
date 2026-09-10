@@ -26,6 +26,27 @@ export function nearestPointIndex(
 }
 
 /**
+ * How a point's drawn marker differs from the flat radius, per point.
+ *
+ * Both exist because a layer's per-point styling and its picking have to describe the same
+ * picture. {@link Points3DLayer} can scale a marker per point and can mute one to
+ * transparency — and the shader DISCARDS a fully muted point, so a picker that ignores
+ * alpha returns something the renderer did not draw, while one that ignores size misses an
+ * enlarged marker the cursor is plainly over. Both are exactly the failure the depth test
+ * was added to prevent, arriving by a different route.
+ *
+ * Callbacks rather than arrays, matching {@link nearestPointIndex}'s `sizeAt`: the caller
+ * usually has the styling in a form of its own and should not have to materialise a second
+ * copy per pointer move.
+ */
+export interface ProjectedPickOptions {
+  /** Pick radius in screen px for point `i`, overriding the flat `radius` argument. */
+  radiusAt?: (i: number) => number;
+  /** False for a point the renderer would not draw — a muted one, or a hidden subset. */
+  pickable?: (i: number) => boolean;
+}
+
+/**
  * The 3D counterpart: index of the point under `(x, y)` in SCREEN pixels, or -1.
  *
  * Takes already-projected positions from {@link projectPoints} rather than a camera, and
@@ -54,8 +75,10 @@ export function nearestProjectedIndex(
   y: number,
   radius: number,
   depth?: Float32Array | null,
+  opts: ProjectedPickOptions = {},
 ): number {
   const n = screen.length >> 1;
+  const { radiusAt, pickable } = opts;
   const r2 = radius * radius;
   let best = -1;
   let bestDepth = Infinity;
@@ -64,7 +87,11 @@ export function nearestProjectedIndex(
     const dx = screen[i * 2] - x;
     const dy = screen[i * 2 + 1] - y;
     const d2 = dx * dx + dy * dy;
-    if (!(d2 <= r2)) continue; // rejects NaN too
+    if (radiusAt) {
+      const r = radiusAt(i);
+      if (!(d2 <= r * r)) continue;
+    } else if (!(d2 <= r2)) continue; // rejects NaN too
+    if (pickable && !pickable(i)) continue;
     if (!depth) {
       if (d2 < bestD2) {
         bestD2 = d2;

@@ -4,6 +4,9 @@ import { Points3DLayer } from '../src/layers/points3d-layer';
 import { VolumeLayer } from '../src/layers/volume-layer';
 import { ImageLayer } from '../src/layers/image-layer';
 import { ShapesLayer } from '../src/layers/shapes-layer';
+import { Camera3D } from '../src/camera/camera3d';
+import { projectPoint } from '../src/picking/project';
+import type { SurfaceBounds } from '../src/layers/surface-layer';
 
 /**
  * When adding a 3D layer moves the camera.
@@ -123,15 +126,83 @@ describe('unionBounds', () => {
 });
 
 describe('framingFor', () => {
-  it('targets the centre and backs off by the radius', () => {
+  it('targets the centre and backs off far enough for the vertical angle', () => {
+    // r / sin(fov/2) at the 45 degree default, not a fixed multiple of the radius.
     const f = framingFor({ min: [0, 0, 0], max: [2, 2, 2], center: [1, 1, 1], radius: 4 });
     expect(f.target).toEqual([1, 1, 1]);
-    expect(f.distance).toBe(10);
+    expect(f.distance).toBeCloseTo(4 / Math.sin(Math.PI / 8), 6);
   });
 
   it('never returns a zero distance', () => {
     const f = framingFor({ min: [0, 0, 0], max: [0, 0, 0], center: [0, 0, 0], radius: 0 });
     expect(f.distance).toBeGreaterThan(0);
+  });
+
+  it('backs off further for a narrower viewport, not the same amount', () => {
+    const b: SurfaceBounds = { min: [0, 0, 0], max: [2, 2, 2], center: [1, 1, 1], radius: 4 };
+    const landscape = framingFor(b, { aspect: 800 / 600 }).distance;
+    const portrait = framingFor(b, { aspect: 400 / 800 }).distance;
+    const sliver = framingFor(b, { aspect: 200 / 1000 }).distance;
+    expect(portrait).toBeGreaterThan(landscape);
+    expect(sliver).toBeGreaterThan(portrait);
+  });
+
+  it('backs off further for a wider field of view', () => {
+    const b: SurfaceBounds = { min: [0, 0, 0], max: [2, 2, 2], center: [1, 1, 1], radius: 4 };
+    const narrow = framingFor(b, { fov: (30 * Math.PI) / 180 }).distance;
+    const wide = framingFor(b, { fov: (90 * Math.PI) / 180 }).distance;
+    expect(narrow).toBeGreaterThan(wide);
+  });
+
+  it('ignores a nonsensical fov or aspect rather than producing NaN', () => {
+    const b: SurfaceBounds = { min: [0, 0, 0], max: [2, 2, 2], center: [1, 1, 1], radius: 4 };
+    for (const view of [{ fov: 0 }, { fov: -1 }, { aspect: 0 }, { aspect: -2 }, {}]) {
+      expect(Number.isFinite(framingFor(b, view).distance)).toBe(true);
+    }
+  });
+
+  /**
+   * The property that actually matters: every corner of the box lands on screen.
+   *
+   * A fixed `radius * 2.5` passed at 800x600 and failed in portrait — the corners of a
+   * 1000x100x100 scene projected to |NDC| 2.0 at 400x800 and 5.1 at 200x1000.
+   */
+  describe('keeps the whole box on screen', () => {
+    /** Worst |NDC| over all eight corners under a camera framed by `framingFor`. */
+    function worstCorner(b: SurfaceBounds, vw: number, vh: number): number {
+      const { target, distance } = framingFor(b, { aspect: vw / vh });
+      const cam = new Camera3D();
+      cam.target = target;
+      cam.distance = distance;
+      const mvp = cam.viewProjection(vw, vh);
+      let worst = 0;
+      for (const x of [b.min[0], b.max[0]]) {
+        for (const y of [b.min[1], b.max[1]]) {
+          for (const z of [b.min[2], b.max[2]]) {
+            const p = projectPoint(mvp, [x, y, z], vw, vh);
+            if (!p.visible) return Infinity;
+            worst = Math.max(worst, Math.abs(p.x / vw - 0.5) * 2, Math.abs(p.y / vh - 0.5) * 2);
+          }
+        }
+      }
+      return worst;
+    }
+
+    const elongated = new Points3DLayer(new Float32Array([-500, -50, -50, 500, 50, 50])).bounds();
+    const cube = new Points3DLayer(new Float32Array([-50, -50, -50, 50, 50, 50])).bounds();
+
+    for (const [vw, vh] of [
+      [800, 600],
+      [400, 800],
+      [200, 1000],
+      [1600, 400],
+      [1000, 1000],
+    ] as const) {
+      it(`${vw}x${vh}`, () => {
+        expect(worstCorner(elongated, vw, vh)).toBeLessThanOrEqual(1);
+        expect(worstCorner(cube, vw, vh)).toBeLessThanOrEqual(1);
+      });
+    }
   });
 });
 

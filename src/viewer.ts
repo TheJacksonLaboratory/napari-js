@@ -413,7 +413,14 @@ export class Viewer {
   }
 
   private frameOn(b: SurfaceBounds): void {
-    const { target, distance } = framingFor(b);
+    // The viewer is the only party that knows both the camera's field of view and the
+    // canvas's shape, which is exactly what a correct framing distance needs.
+    const vw = this.canvas.clientWidth || this.canvas.width || 1;
+    const vh = this.canvas.clientHeight || this.canvas.height || 1;
+    const { target, distance } = framingFor(b, {
+      fov: this.model.camera3d.fov,
+      aspect: vw / vh,
+    });
     this.model.camera3d.target = target;
     this.model.camera3d.distance = distance;
   }

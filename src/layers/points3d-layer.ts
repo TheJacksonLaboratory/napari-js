@@ -30,8 +30,22 @@ export interface Points3DLayerOptions {
   sizes?: Float32Array;
 }
 
-/** Interleaved GPU instance = [x, y, z, value, alpha, sizeScale] → 6 floats. */
-export const POINTS3D_INSTANCE_FLOATS = 6;
+/**
+ * Instance data is TWO buffers, not one interleaved six.
+ *
+ * They change on different clocks. Geometry and values move when the dataset or the colour
+ * source does; alpha and size move on every selection click. Interleaving means a click
+ * re-interleaves and re-uploads the positions too — measured at 3.7M points, that is a
+ * 32.9 ms rebuild and 88.8 MB across the bus to change 29.6 MB of style. Splitting them
+ * leaves the static 59.2 MB alone.
+ *
+ * Same reasoning {@link ShapesLayer} already uses for positions vs values.
+ */
+/** Static instance data = [x, y, z, value] → 4 floats. */
+export const POINTS3D_DATA_FLOATS = 4;
+
+/** Mutable per-point style = [alpha, sizeScale] → 2 floats. */
+export const POINTS3D_STYLE_FLOATS = 2;
 
 /**
  * A 3D scatter of point markers (napari Points-in-3D analog): `positions` (N×3, world/data coords,
@@ -60,11 +74,22 @@ export class Points3DLayer extends Layer {
    */
   dataVersion = 0;
 
+  /**
+   * Bumped by every change to the per-point STYLE, separately from {@link dataVersion}.
+   *
+   * Two counters because the two halves change on different clocks: a selection click
+   * touches only alpha and size, and sharing one counter would make it re-upload the
+   * positions too.
+   */
+  styleVersion = 0;
+
   private _alphas: Float32Array | null;
   private _sizes: Float32Array | null;
 
   private _colormap: Colormap;
   private _contrastLimits: [number, number];
+  /** Whether the caller pinned the window, or it was derived from the values. */
+  private _contrastExplicit: boolean;
   private _gamma: number;
   private _size: number;
 
@@ -85,6 +110,7 @@ export class Points3DLayer extends Layer {
     this._sizes = checkLength(opts.sizes, n, 'sizes');
     this._colormap = resolveColormap(opts.colormap ?? 'viridis');
     this._contrastLimits = opts.contrastLimits ?? valueRange(vals);
+    this._contrastExplicit = opts.contrastLimits !== undefined;
     this._gamma = opts.gamma ?? 1;
     this._size = opts.size ?? 6;
     this._blending = opts.blending ?? 'translucent';
@@ -104,7 +130,7 @@ export class Points3DLayer extends Layer {
   }
   set alphas(value: Float32Array | null | undefined) {
     this._alphas = checkLength(value ?? undefined, this.count, 'alphas');
-    this.dataVersion++;
+    this.styleVersion++;
     this.changed.emit(this);
   }
 
@@ -114,7 +140,7 @@ export class Points3DLayer extends Layer {
   }
   set sizes(value: Float32Array | null | undefined) {
     this._sizes = checkLength(value ?? undefined, this.count, 'sizes');
-    this.dataVersion++;
+    this.styleVersion++;
     this.changed.emit(this);
   }
 
@@ -133,6 +159,12 @@ export class Points3DLayer extends Layer {
   set values(next: Float32Array) {
     checkLength(next, this.count, 'values');
     this._values = next;
+    // A DERIVED window has to follow the values it was derived from. Otherwise replacing
+    // [10, 30] with [100, 300] keeps the old window and every point clamps to the top of
+    // the LUT — a uniformly saturated cloud, which reads as a colormap problem rather than
+    // a stale window. A window the caller pinned is theirs and is left alone.
+    // {@link ShapesLayer} already works this way; this is the 3D layer matching it.
+    if (!this._contrastExplicit) this._contrastLimits = valueRange(next);
     this.dataVersion++;
     this.changed.emit(this);
   }
@@ -151,6 +183,7 @@ export class Points3DLayer extends Layer {
   }
   set contrastLimits(value: readonly [number, number]) {
     this._contrastLimits = [value[0], value[1]];
+    this._contrastExplicit = true;
     this.changed.emit(this);
   }
 
@@ -195,25 +228,37 @@ export class Points3DLayer extends Layer {
   }
 
   /**
-   * Interleave into the GPU instance buffer (N × [x, y, z, value, alpha, sizeScale]).
-   *
-   * The two per-point channels default to 1 so an unstyled layer renders exactly as it did
-   * before they existed — they multiply the layer-wide `opacity` and `size` rather than
-   * replacing them.
+   * The static half: N × [x, y, z, value]. Rebuilt when the geometry or the scalars change,
+   * which {@link dataVersion} tracks.
    */
   buildInstanceData(): Float32Array {
     const n = this.count;
-    const out = new Float32Array(n * POINTS3D_INSTANCE_FLOATS);
-    const alphas = this._alphas;
-    const sizes = this._sizes;
+    const out = new Float32Array(n * POINTS3D_DATA_FLOATS);
     for (let i = 0; i < n; i++) {
-      const o = i * POINTS3D_INSTANCE_FLOATS;
+      const o = i * POINTS3D_DATA_FLOATS;
       out[o] = this.positions[i * 3];
       out[o + 1] = this.positions[i * 3 + 1];
       out[o + 2] = this.positions[i * 3 + 2];
       out[o + 3] = this._values[i];
-      out[o + 4] = alphas ? alphas[i] : 1;
-      out[o + 5] = sizes ? sizes[i] : 1;
+    }
+    return out;
+  }
+
+  /**
+   * The mutable half: N × [alpha, sizeScale], tracked by {@link styleVersion}.
+   *
+   * Both default to 1, so a layer that sets neither renders exactly as it did before they
+   * existed — they multiply the layer-wide `opacity` and `size` rather than replacing them.
+   */
+  buildStyleData(): Float32Array {
+    const n = this.count;
+    const out = new Float32Array(n * POINTS3D_STYLE_FLOATS);
+    const alphas = this._alphas;
+    const sizes = this._sizes;
+    for (let i = 0; i < n; i++) {
+      const o = i * POINTS3D_STYLE_FLOATS;
+      out[o] = alphas ? alphas[i] : 1;
+      out[o + 1] = sizes ? sizes[i] : 1;
     }
     return out;
   }

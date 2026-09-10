@@ -139,6 +139,74 @@ describe('projectPoints', () => {
     expect(Array.from(out.depth).every(Number.isNaN)).toBe(true);
   });
 
+  /**
+   * The near and far planes, which `w > 0` alone does not cover.
+   *
+   * Reachable by dollying, not by a contrived pose: `Camera3D` derives `near` from the
+   * camera distance (`distance * 0.05`) and `far` from it too (`distance * 4 + 1`), so
+   * moving the camera moves both planes through a stationary cloud.
+   */
+  describe('the near and far planes', () => {
+    /** A camera looking down -z at the origin from `distance`. */
+    function cameraAt(distance: number) {
+      const cam = new Camera3D();
+      cam.target = [0, 0, 0];
+      cam.distance = distance;
+      return cam;
+    }
+
+    it('rejects a point in front of the near plane', () => {
+      // Sitting essentially at the eye: measured clip z of about -1.5e7, and the renderer
+      // draws nothing — but a w-only test called it visible and pickable.
+      const cam = cameraAt(100);
+      const eye = cam.eye();
+      const mvp = cam.viewProjection(800, 600);
+      const atEye: [number, number, number] = [eye[0] * 0.999, eye[1] * 0.999, eye[2] * 0.999];
+      expect(projectPoint(mvp, atEye, 800, 600).visible).toBe(false);
+      const { screen } = projectPoints(mvp, Float32Array.from(atEye), 800, 600);
+      expect(Number.isNaN(screen[0])).toBe(true);
+    });
+
+    it('rejects a point beyond the far plane', () => {
+      const cam = cameraAt(20);
+      const mvp = cam.viewProjection(800, 600);
+      // far = 20*4 + 1 = 81 from the eye, and the eye is 20 out, so 200 along the view
+      // axis is comfortably past it.
+      const eye = cam.eye();
+      const beyond = Float32Array.from([-eye[0] * 9, -eye[1] * 9, -eye[2] * 9]);
+      expect(projectPoint(mvp, [beyond[0], beyond[1], beyond[2]], 800, 600).visible).toBe(false);
+      expect(Number.isNaN(projectPoints(mvp, beyond, 800, 600).screen[0])).toBe(true);
+    });
+
+    it('still accepts what the camera is actually framed on', () => {
+      // The guard must not reject the scene it was added to protect: a cloud framed at
+      // 2.5 radii sits well inside both planes.
+      const radius = 100;
+      const cam = cameraAt(radius * 2.5);
+      const mvp = cam.viewProjection(800, 600);
+      const cloud = new Float32Array([0, 0, 0, radius, 0, 0, 0, radius, 0, 0, 0, radius]);
+      const { screen } = projectPoints(mvp, cloud, 800, 600);
+      expect(Array.from(screen).some(Number.isNaN)).toBe(false);
+    });
+
+    it('agrees between the single and batch paths at both planes', () => {
+      const cam = cameraAt(20);
+      const mvp = cam.viewProjection(800, 600);
+      const eye = cam.eye();
+      const pts = [
+        [eye[0] * 0.999, eye[1] * 0.999, eye[2] * 0.999] as [number, number, number],
+        [-eye[0] * 9, -eye[1] * 9, -eye[2] * 9] as [number, number, number],
+        [0, 0, 0] as [number, number, number],
+      ];
+      const flat = Float32Array.from(pts.flat());
+      const batch = projectPoints(mvp, flat, 800, 600);
+      pts.forEach((p, i) => {
+        const one = projectPoint(mvp, p, 800, 600);
+        expect(one.visible).toBe(!Number.isNaN(batch.screen[i * 2]));
+      });
+    });
+  });
+
   it('works against a real Camera3D view-projection', () => {
     // The contract that matters: the matrix the renderer draws with is the matrix a host
     // can project with, with no transposition or convention shim in between.
@@ -155,7 +223,8 @@ describe('projectPoints', () => {
 });
 
 describe('nearestProjectedIndex', () => {
-  //         idx0 at (100,100) near, idx1 at (105,100) far, idx2 offscreen
+  // Larger depth is FURTHER: idx0 at (100,100) is the far one (depth 5), idx1 at
+  // (105,100) is nearer the eye (depth 1), idx2 is off screen.
   const screen = new Float32Array([100, 100, 105, 100, NaN, NaN]);
   const depth = new Float32Array([5, 1, NaN]);
 
@@ -189,6 +258,45 @@ describe('nearestProjectedIndex', () => {
   it('respects the radius as a hard cutoff', () => {
     expect(nearestProjectedIndex(screen, 100, 100, 4, depth)).toBe(0); // idx1 is 5px away
     expect(nearestProjectedIndex(screen, 100, 100, 6, depth)).toBe(1);
+  });
+
+  /**
+   * Picking has to describe the same picture the layer draws.
+   *
+   * `Points3DLayer` can scale a marker per point and mute one to transparency — and the
+   * shader DISCARDS a fully muted point. A picker that ignores either returns something
+   * the renderer did not draw, or misses a marker the cursor is plainly over.
+   */
+  describe('per-point styling', () => {
+    it('skips a point the shader would discard', () => {
+      // idx0 is under the cursor but muted to alpha 0; idx1 is drawn.
+      const alphas = new Float32Array([0, 1]);
+      const pickable = (i: number) => alphas[i] > 0;
+      expect(nearestProjectedIndex(screen, 100, 100, 20, depth)).toBe(1);
+      expect(nearestProjectedIndex(screen, 100, 100, 3, depth)).toBe(0);
+      expect(nearestProjectedIndex(screen, 100, 100, 3, depth, { pickable })).toBe(-1);
+    });
+
+    it('finds an enlarged marker a flat radius would miss', () => {
+      // Cursor at x=112: 12px from idx0 and 7px from idx1. At the flat radius of 3 neither
+      // is found. idx1 is drawn at 4x — a 12px marker — so it does cover the cursor, and
+      // only a per-point radius can tell.
+      const sizes = new Float32Array([1, 4]);
+      const radiusAt = (i: number) => 3 * sizes[i];
+      expect(nearestProjectedIndex(screen, 112, 100, 3, depth)).toBe(-1);
+      expect(nearestProjectedIndex(screen, 112, 100, 3, depth, { radiusAt })).toBe(1);
+    });
+
+    it('still prefers the front-most among what is pickable', () => {
+      const radiusAt = () => 20;
+      expect(nearestProjectedIndex(screen, 100, 100, 1, depth, { radiusAt })).toBe(1);
+    });
+
+    it('behaves as before when neither option is given', () => {
+      expect(nearestProjectedIndex(screen, 100, 100, 20, depth, {})).toBe(
+        nearestProjectedIndex(screen, 100, 100, 20, depth),
+      );
+    });
   });
 
   it('leaves the 2D picker alone', () => {

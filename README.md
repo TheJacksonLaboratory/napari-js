@@ -34,12 +34,16 @@ A browser-native, **WebGPU** rendering engine that ports the visualization model
 - **Host-friendly**: device-loss recovery, `ResizeObserver` auto-resize, and
   `canvasToWorld` / `worldToCanvas` / `visibleWorldRect` for overlays and picking.
 - **3D projection & picking**: `viewer.projectPoints()` (or the pure `projectPoint` /
-  `projectPoints`) maps world coordinates to canvas CSS pixels under the orbit camera, and
-  `nearestProjectedIndex` hit-tests the result **front-most first**, so a tooltip agrees with what
-  the depth buffer actually drew. A host no longer reimplements the perspective divide.
+  `projectPoints`) maps world coordinates to canvas CSS pixels under the orbit camera, honouring
+  the near and far planes as well as the eye. `nearestProjectedIndex` hit-tests the result
+  **front-most first**, optionally per-point radius and pickability, so a tooltip agrees with what
+  the depth buffer actually drew; `ScreenIndex` buckets the projection so a multi-million-point
+  cloud picks in microseconds rather than milliseconds. A host no longer reimplements the
+  perspective divide.
 - **Explicit camera framing**: `fit3d: 'always' | 'once' | 'never'` on the viewer (or per add),
   plus `fitToLayers()` over the union of every 3D layer and `resetFit3D()` — so building a scene
-  from several layers does not make the view jump.
+  from several layers does not make the view jump. The distance is derived from both half-angles
+  of the frustum, so a portrait viewport frames the scene rather than cropping it.
 
 ## Install & use
 

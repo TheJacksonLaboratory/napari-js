@@ -24,7 +24,10 @@ export interface ProjectedPoint {
    * axis. Larger is further away. Useful for choosing the front-most of several candidates.
    */
   depth: number;
-  /** False when the point is at or behind the eye plane, where a divide by w is nonsense. */
+  /**
+   * False when the renderer would not draw this point: at or behind the eye, in front of
+   * the near plane, or past the far plane.
+   */
   visible: boolean;
 }
 
@@ -53,6 +56,7 @@ export function projectPoint(
   // Column-major (gl-matrix layout): clip[r] = Σ_c M[c*4 + r] · v[c].
   const cx = mvp[0] * x + mvp[4] * y + mvp[8] * z + mvp[12];
   const cy = mvp[1] * x + mvp[5] * y + mvp[9] * z + mvp[13];
+  const cz = mvp[2] * x + mvp[6] * y + mvp[10] * z + mvp[14];
   const cw = mvp[3] * x + mvp[7] * y + mvp[11] * z + mvp[15];
   // `> 0` rather than `!== 0`: at or behind the eye the divide flips the sign and puts the
   // point on the opposite side of the screen, which is worse than reporting nothing.
@@ -61,7 +65,9 @@ export function projectPoint(
   // — a real position — so a caller that forgets to check `visible` would place an overlay
   // there instead of hiding it, which is exactly the sentinel-coordinate failure the batch
   // API uses NaN to avoid. Two functions in one module should not disagree about it.
-  if (!(cw > 0)) return { x: NaN, y: NaN, depth: NaN, visible: false };
+  if (!(cw > 0) || !insideDepth(cz / cw)) {
+    return { x: NaN, y: NaN, depth: NaN, visible: false };
+  }
   return {
     x: ((cx / cw) * 0.5 + 0.5) * vw,
     // NDC y points up and the screen's points down, so this is a flip, not a scale.
@@ -69,6 +75,23 @@ export function projectPoint(
     depth: cw,
     visible: true,
   };
+}
+
+/**
+ * Whether a clip-space depth is inside what the rasteriser will draw.
+ *
+ * WebGPU's clip volume is `0 ≤ z ≤ w`, so after the divide the drawn range is `[0, 1]` —
+ * not the OpenGL `[-1, 1]`, and {@link perspective} here is built for the former.
+ *
+ * Checking `w > 0` alone is not enough, and the gap is reachable by ordinary dollying
+ * rather than by a contrived pose. Measured with a 100-unit cloud: at a camera distance of
+ * 100 the nearest points sit at the eye and come back with a clip z of about -1.5e7, and
+ * from distance 50 downward the far side crosses z = 1 — in both cases the renderer has
+ * clipped them while a `w`-only test still calls them visible. A tooltip then names a point
+ * that is not on screen, which is the same failure the depth-aware pick was added to stop.
+ */
+function insideDepth(z: number): boolean {
+  return z >= 0 && z <= 1;
 }
 
 /**
@@ -97,15 +120,19 @@ export function projectPoints(
 
   const m0 = mvp[0];
   const m1 = mvp[1];
+  const m2 = mvp[2];
   const m3 = mvp[3];
   const m4 = mvp[4];
   const m5 = mvp[5];
+  const m6 = mvp[6];
   const m7 = mvp[7];
   const m8 = mvp[8];
   const m9 = mvp[9];
+  const m10 = mvp[10];
   const m11 = mvp[11];
   const m12 = mvp[12];
   const m13 = mvp[13];
+  const m14 = mvp[14];
   const m15 = mvp[15];
 
   for (let i = 0; i < n; i++) {
@@ -114,6 +141,8 @@ export function projectPoints(
     const z = positions[i * 3 + 2];
     const cw = m3 * x + m7 * y + m11 * z + m15;
     if (!(cw > 0)) continue;
+    const cz = m2 * x + m6 * y + m10 * z + m14;
+    if (!insideDepth(cz / cw)) continue;
     const cx = m0 * x + m4 * y + m8 * z + m12;
     const cy = m1 * x + m5 * y + m9 * z + m13;
     screen[i * 2] = ((cx / cw) * 0.5 + 0.5) * vw;

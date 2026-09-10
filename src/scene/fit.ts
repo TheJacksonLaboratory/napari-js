@@ -134,10 +134,42 @@ export class Fit3DState {
   }
 }
 
-/** Camera target and distance for a box — the framing itself, separated from the decision. */
-export function framingFor(b: SurfaceBounds): {
-  target: [number, number, number];
-  distance: number;
-} {
-  return { target: b.center, distance: Math.max(b.radius * 2.5, 1e-3) };
+/** The viewport a framing has to fit inside. */
+export interface FramingView {
+  /** Vertical field of view in RADIANS, as {@link Camera3D.fov} has it. */
+  fov?: number;
+  /** Viewport width / height. Below 1 (portrait) is the case a fixed factor gets wrong. */
+  aspect?: number;
 }
+
+/**
+ * Camera target and distance for a box — the framing itself, separated from the decision.
+ *
+ * Derived from BOTH half-angles rather than from a fixed multiple of the radius. A constant
+ * factor implicitly assumes one field of view and one viewport shape, and the horizontal
+ * half-angle shrinks with the aspect ratio, so a portrait viewport is where it fails:
+ * measured with a 1000x100x100 scene framed by the previous `radius * 2.5`, the box corners
+ * projected to |NDC| 2.0 at 400x800 and 5.1 at 200x1000 — two and five times off screen.
+ * At 4:3 landscape that factor was already slightly tight (2.5 against the 2.61 the vertical
+ * angle alone needs), so this widens rather than narrows the common case too.
+ *
+ * `radius` is the bounding SPHERE (half the box diagonal), so fitting it fits the box from
+ * every orbit angle — the camera can rotate without the scene growing past the frame, which
+ * a box-corner fit computed for one pose would not give.
+ */
+export function framingFor(
+  b: SurfaceBounds,
+  view: FramingView = {},
+): { target: [number, number, number]; distance: number } {
+  const fov = view.fov && view.fov > 0 ? view.fov : DEFAULT_FOV;
+  const aspect = view.aspect && view.aspect > 0 ? view.aspect : 1;
+  const halfY = fov / 2;
+  // Horizontal half-angle: tan scales with the aspect, and the ANGLE is what the fit needs.
+  const halfX = Math.atan(Math.tan(halfY) * aspect);
+  // The tighter angle decides, so take the larger of the two distances.
+  const distance = Math.max(b.radius / Math.sin(halfY), b.radius / Math.sin(halfX));
+  return { target: b.center, distance: Math.max(distance, 1e-3) };
+}
+
+/** Matches {@link Camera3D}'s own default, so a caller that omits `fov` gets its behaviour. */
+const DEFAULT_FOV = (45 * Math.PI) / 180;

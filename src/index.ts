@@ -49,9 +49,12 @@ export {
 } from './layers/shapes-layer';
 export type { ShapesLayerOptions, ShapeDraw, ShapeGeometry } from './layers/shapes-layer';
 export { nearestPointIndex, nearestProjectedIndex } from './picking/pick';
+export type { ProjectedPickOptions } from './picking/pick';
+export { ScreenIndex, pickLinear, SCREEN_INDEX_MIN_POINTS } from './picking/screen-index';
 export { projectPoint, projectPoints } from './picking/project';
 export type { ProjectedPoint, ProjectedPoints } from './picking/project';
 export { unionBounds, resolveFit, framingFor, Fit3DState } from './scene/fit';
+export type { FramingView } from './scene/fit';
 export type { Bounded } from './scene/fit';
 
 // Color
