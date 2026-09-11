@@ -28,6 +28,30 @@ import type { ProjectedPoints } from './project';
 /** Smallest cell edge in pixels. Below this the grid costs more in cells than it saves. */
 const MIN_CELL = 8;
 
+/**
+ * How far outside the canvas a marker's CENTRE may sit and still be indexed.
+ *
+ * A marker has size. Its centre can be off the canvas while part of it is drawn — and
+ * therefore pickable — so an index that keeps only centres inside the viewport disagrees
+ * with the linear picker along every edge. Default 32 px covers the marker sizes this
+ * layer draws; a caller using larger ones passes its own.
+ */
+const DEFAULT_MAX_REACH = 32;
+
+export interface ScreenIndexOptions {
+  /**
+   * Cell edge in pixels. About the largest marker radius in play: the query visits every
+   * cell within the search radius, so a cell much smaller than the radius visits many and
+   * a cell much larger makes each one a linear scan.
+   */
+  cell?: number;
+  /**
+   * The largest distance a drawn marker can reach from its centre, in pixels. Centres
+   * within this margin of the canvas are indexed; anything further out cannot be picked.
+   */
+  maxReach?: number;
+}
+
 export class ScreenIndex {
   /** Cell edge in screen pixels. */
   readonly cell: number;
@@ -35,6 +59,14 @@ export class ScreenIndex {
   readonly cols: number;
 
   readonly rows: number;
+
+  /** Margin in pixels by which the grid overhangs the canvas on every side. */
+  readonly margin: number;
+
+  /** Grid origin in screen coordinates — `-margin`, so cell 0 starts outside the canvas. */
+  private readonly originX: number;
+
+  private readonly originY: number;
 
   /** Start of each cell's slice in {@link items}; length `cols*rows + 1`. */
   private readonly starts: Int32Array;
@@ -47,23 +79,35 @@ export class ScreenIndex {
   private readonly depth: Float32Array | null;
 
   /**
-   * `cellHint` should be about the largest marker radius in play: the query only visits
-   * cells within the search radius, so a cell much smaller than the radius visits many and
-   * a cell much larger makes each one a linear scan.
+   * The grid OVERHANGS the canvas by {@link ScreenIndexOptions.maxReach} on every side.
+   *
+   * Without the overhang this disagreed with the linear picker along the edges: a marker
+   * centred at x = -2 with a radius of 6 is drawn, and is under a cursor at x = 1, but its
+   * centre is off the canvas and a viewport-sized grid dropped it. Worse, whether a given
+   * edge was affected depended on arithmetic — `ceil(600/32)` overhangs to 608 and hid the
+   * bug on that edge, while `ceil(800/32)` is exact and exposed it. An index that is
+   * accidentally correct on two edges out of four is the harder kind of wrong.
+   *
+   * So the origin starts at `-margin` and the grid is sized to cover the canvas plus the
+   * margin on both sides. Every point a marker could reach the cursor from is in a real
+   * cell, and nothing depends on whether the viewport divides evenly by the cell size.
    */
-  constructor(projected: ProjectedPoints, vw: number, vh: number, cellHint = 32) {
+  constructor(projected: ProjectedPoints, vw: number, vh: number, opts: ScreenIndexOptions = {}) {
     this.screen = projected.screen;
     this.depth = projected.depth ?? null;
-    this.cell = Math.max(MIN_CELL, cellHint);
-    this.cols = Math.max(1, Math.ceil(vw / this.cell));
-    this.rows = Math.max(1, Math.ceil(vh / this.cell));
+    this.cell = Math.max(MIN_CELL, opts.cell ?? 32);
+    this.margin = Math.max(0, opts.maxReach ?? DEFAULT_MAX_REACH);
+    this.originX = -this.margin;
+    this.originY = -this.margin;
+    this.cols = Math.max(1, Math.ceil((vw + 2 * this.margin) / this.cell));
+    this.rows = Math.max(1, Math.ceil((vh + 2 * this.margin) / this.cell));
 
     const n = this.screen.length >> 1;
     const cellCount = this.cols * this.rows;
     const counts = new Int32Array(cellCount + 1);
 
-    // Pass 1: count. Points off the canvas or NaN are simply not indexed — they can never
-    // be under the cursor, so leaving them out shrinks the grid rather than wasting cells.
+    // Pass 1: count. Points beyond the margin, and NaN ones, are not indexed — no marker
+    // reaches the cursor from there, so leaving them out shrinks the grid.
     const cellOf = new Int32Array(n).fill(-1);
     for (let i = 0; i < n; i++) {
       const c = this.cellIndex(this.screen[i * 2], this.screen[i * 2 + 1]);
@@ -90,10 +134,12 @@ export class ScreenIndex {
   }
 
   private cellIndex(x: number, y: number): number {
+    const gx = x - this.originX;
+    const gy = y - this.originY;
     // NaN fails both comparisons, so an unprojected point is excluded here.
-    if (!(x >= 0) || !(y >= 0)) return -1;
-    const cx = Math.floor(x / this.cell);
-    const cy = Math.floor(y / this.cell);
+    if (!(gx >= 0) || !(gy >= 0)) return -1;
+    const cx = Math.floor(gx / this.cell);
+    const cy = Math.floor(gy / this.cell);
     if (cx >= this.cols || cy >= this.rows) return -1;
     return cy * this.cols + cx;
   }
@@ -108,10 +154,13 @@ export class ScreenIndex {
    */
   pick(x: number, y: number, radius: number, opts: ProjectedPickOptions = {}): number {
     const { radiusAt, pickable } = opts;
-    const minCx = Math.max(0, Math.floor((x - radius) / this.cell));
-    const maxCx = Math.min(this.cols - 1, Math.floor((x + radius) / this.cell));
-    const minCy = Math.max(0, Math.floor((y - radius) / this.cell));
-    const maxCy = Math.min(this.rows - 1, Math.floor((y + radius) / this.cell));
+    // Same origin shift as the build, or the query would read the wrong cells.
+    const gx = x - this.originX;
+    const gy = y - this.originY;
+    const minCx = Math.max(0, Math.floor((gx - radius) / this.cell));
+    const maxCx = Math.min(this.cols - 1, Math.floor((gx + radius) / this.cell));
+    const minCy = Math.max(0, Math.floor((gy - radius) / this.cell));
+    const maxCy = Math.min(this.rows - 1, Math.floor((gy + radius) / this.cell));
     const r2 = radius * radius;
 
     let best = -1;
