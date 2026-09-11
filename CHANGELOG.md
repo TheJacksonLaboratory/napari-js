@@ -3,6 +3,118 @@
 All notable changes to napari-js are documented here. The format roughly follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.14.0]
+
+Renderer-owned 3D projection, picking, per-point styling and camera framing. Each of these
+existed as a workaround in a consumer because the API did not offer it; an ownership audit
+against sci-image-visualizer found five such, and this release takes them back.
+
+### Added
+
+- **3D world-to-screen projection.** `projectPoint` / `projectPoints`, and
+  `Viewer.projectPoints()` which supplies the live view-projection and the canvas size in CSS
+  pixels. A host that wants to put anything over a 3D scene — a DOM label, a tooltip, a lasso,
+  a hit test — previously had to multiply `Camera3D.viewProjection()` by hand, index it
+  column-major, do the perspective divide and remember that NDC y points up while the screen's
+  points down. Every host writes the same fifteen lines, and each copy is free to disagree with
+  the renderer about what is on screen; one consumer had already written it twice, in two files,
+  with two different behind-the-eye conventions.
+
+  A point the rasteriser would not draw comes back `visible: false` with `NaN` coordinates. Both
+  the near and far planes count, not just the eye: `Camera3D` derives `near` and `far` FROM the
+  camera distance, so the planes sweep through a stationary cloud as the camera moves, and a
+  `w > 0` test alone reports points the renderer has clipped. `NaN` rather than a sentinel like
+  `(0, 0)` — the canvas corner is a real position, so a caller who skips the check would place an
+  overlay there instead of hiding it.
+
+  Batch projection reuses caller-supplied buffers, since a large cloud is re-projected on every
+  camera change.
+
+- **Depth-aware 3D picking.** `nearestProjectedIndex` takes the depths `projectPoints` produced
+  and returns the FRONT-most candidate, tie-broken by cursor distance. `nearestPointIndex` had no
+  3D counterpart, so hosts picked on projected coordinates by nearest centre — and in a dense
+  cloud the cursor covers many points, so that returns whichever is best aligned, including ones
+  drawn behind something opaque. These billboards are depth-tested, so a picker that ignores depth
+  disagrees with the picture.
+
+  `ProjectedPickOptions` adds `radiusAt` and `pickable`, so picking can describe the same picture
+  the layer draws: a marker scaled up per point is found, and one muted to transparency — which
+  the shader discards — is not. Callbacks rather than arrays, matching `nearestPointIndex`'s
+  existing `sizeAt`.
+
+- **`ScreenIndex`**, a screen-space bucket grid over a projection, with `pickLinear`,
+  `SCREEN_INDEX_MIN_POINTS` and `ScreenIndexOptions`. At 3.7M points a linear pick is ~12.6 ms per
+  pointer move against ~0.066 ms indexed — about 190x — for a ~43.5 ms build.
+
+  Build it LAZILY, on the first pick after the projection changed, not when the camera moves:
+  an orbit drag changes the camera every frame, so building eagerly would spend the build cost per
+  frame serving picks nobody is making, which is strictly worse than the scan it replaces.
+
+  The grid overhangs the canvas by `maxReach` on every side, because a marker has size — its
+  centre can sit off the canvas while part of it is drawn and pickable.
+
+- **Per-point `alphas` and `sizes` on `Points3DLayer`**, multiplying the layer-wide `opacity` and
+  `size`. With one opacity for the whole cloud, a host highlighting a subset had to draw it again
+  in a second layer, keep that in step through every colormap, window and size change, and accept
+  that the two depth-sorted against each other as separate draws. Both default to 1, so a layer
+  that sets neither renders exactly as before.
+
+- **`dataVersion` and `styleVersion` on `Points3DLayer`**, so a change is a mutation rather than a
+  new layer — and, since adding a 3D layer framed the camera, so a recolour is no longer a camera
+  jump the host has to undo.
+
+- **An explicit camera framing policy.** `Fit3D` (`'always' | 'once' | 'never'`) as
+  `ViewerOptions.fit3d` or per add, plus `Viewer.fitToLayers()`, `Viewer.resetFit3D()`, and the
+  pure `Fit3DState`, `unionBounds`, `resolveFit`, `framingFor` (`FramingView`) and `Bounded`.
+  Every 3D add used to reframe unconditionally, so a scene built from more than one layer jumped,
+  and the only defence was to save the camera's five fields around each add and put them back.
+
+  `fitToLayers()` frames on the UNION of every bounded layer: a point cloud inside a reference
+  volume is one scene, and framing on whichever layer was added last shows a part of it.
+
+- **`VolumeLayer.bounds()`**, so a volume takes part in that union.
+
+### Changed
+
+- **`Points3DLayer.values` is a validating accessor**, not a bare field. Assigning to it checks the
+  length, bumps `dataVersion`, emits, and retunes a contrast window that was DERIVED from the data
+  — replacing `[10, 30]` with `[100, 300]` used to keep the old window, so every point clamped to
+  the top of the LUT. A window the caller pinned is left alone, matching `ShapesLayer`.
+
+- **The 3D instance data is two vertex buffers**, not one interleaved six floats:
+  `POINTS3D_INSTANCE_FLOATS` is replaced by `POINTS3D_DATA_FLOATS` (`[x, y, z, value]`) and
+  `POINTS3D_STYLE_FLOATS` (`[alpha, sizeScale]`), with `buildInstanceData()` and `buildStyleData()`
+  on two version counters. They change on different clocks — a selection click touches only the
+  style — and interleaving meant re-uploading the geometry with it: 88.8 MB and 32.9 ms at 3.7M
+  points to change 29.6 MB, now 29.6 MB and 21.5 ms.
+
+- **Framing distance derives from both half-angles of the frustum**, not a fixed `radius * 2.5`.
+  A constant factor assumes one field of view and one viewport shape, and the horizontal
+  half-angle shrinks with the aspect ratio: the corners of a 1000x100x100 scene projected to
+  |NDC| 2.0 at 400x800 and 5.1 at 200x1000. It was already slightly tight in landscape — 2.5
+  against the 2.61 the vertical angle alone needs at the 45 degree default — so this widens the
+  common case as well as fixing portrait.
+
+- `fit3d` defaults to `'always'`, so existing callers see no behavioural change from the policy
+  itself.
+
+### Fixed
+
+- `unionBounds` no longer accepts a layer whose `bounds()` is 2D or nullable. `ShapesLayer` has
+  one too, and a guard that only checked for the METHOD took it: an empty one threw, and a
+  non-empty one contributed an `undefined` z. Order decided which — trailing a 3D layer the
+  `undefined` lost every comparison and the bug hid; leading, it seeded the union and the camera
+  target came out NaN.
+
+- `ScreenIndex` and the linear picker agree at the canvas edges and at the exact endpoints of
+  `maxReach`, on both sides. Two defects, both found in review: the first grid dropped every centre
+  outside the viewport, and the second kept the two ends of its margin asymmetric — `ceil` sizing
+  put the exact upper endpoint one cell past the grid whenever the span divided evenly, so
+  `width + maxReach` was excluded while `-maxReach` was kept.
+
+- `ScreenIndexOptions` is exported from the package root; it was part of the public constructor
+  contract with no supported import path.
+
 ## [0.13.0]
 
 ### Added
