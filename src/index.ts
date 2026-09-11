@@ -51,6 +51,7 @@ export type { ShapesLayerOptions, ShapeDraw, ShapeGeometry } from './layers/shap
 export { nearestPointIndex, nearestProjectedIndex } from './picking/pick';
 export type { ProjectedPickOptions } from './picking/pick';
 export { ScreenIndex, pickLinear, SCREEN_INDEX_MIN_POINTS } from './picking/screen-index';
+export type { ScreenIndexOptions } from './picking/screen-index';
 export { projectPoint, projectPoints } from './picking/project';
 export type { ProjectedPoint, ProjectedPoints } from './picking/project';
 export { unionBounds, resolveFit, framingFor, Fit3DState } from './scene/fit';

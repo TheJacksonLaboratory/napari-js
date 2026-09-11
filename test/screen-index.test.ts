@@ -154,6 +154,102 @@ describe('ScreenIndex', () => {
       expect(idx.margin).toBeGreaterThan(0);
     });
 
+    /**
+     * The EXACT endpoints of the margin, on both sides.
+     *
+     * The Round 4 margin fixed centres just outside the canvas but left the two ends of it
+     * asymmetric: with `ceil(span / cell)` columns, a span dividing evenly by the cell put
+     * `width + maxReach` one column past the grid while `-maxReach` mapped to column 0.
+     * Visible only when the arithmetic came out even — 832/32 exposed it, 822/32 hid it —
+     * which is the same shape of latent fault as the edge bug itself.
+     */
+    describe('the exact outer endpoints of maxReach', () => {
+      const REACH = 16;
+      const CELL = 32;
+
+      /** Both pickers, for one marker centred at `(cx, cy)` probed from `(x, y)`. */
+      function both(vw: number, vh: number, cx: number, cy: number, x: number, y: number) {
+        const screen = Float32Array.from([cx, cy]);
+        const depth = Float32Array.from([1]);
+        return {
+          linear: nearestProjectedIndex(screen, x, y, REACH, depth),
+          indexed: new ScreenIndex({ screen, depth }, vw, vh, {
+            cell: CELL,
+            maxReach: REACH,
+          }).pick(x, y, REACH),
+        };
+      }
+
+      // 800 + 2*16 = 832 divides evenly by 32; 790 + 2*16 = 822 does not. Both must behave
+      // the same, which is the property the old `ceil` sizing did not have.
+      for (const vw of [800, 790]) {
+        it(`includes x = width + maxReach (width ${vw})`, () => {
+          const { linear, indexed } = both(vw, 600, vw + REACH, 100, vw, 100);
+          expect(linear).toBe(0);
+          expect(indexed).toBe(linear);
+        });
+      }
+
+      it('includes x = -maxReach, the other end of the same margin', () => {
+        const { linear, indexed } = both(800, 600, -REACH, 100, 0, 100);
+        expect(linear).toBe(0);
+        expect(indexed).toBe(linear);
+      });
+
+      it('includes y = height + maxReach', () => {
+        const { linear, indexed } = both(800, 600, 100, 600 + REACH, 100, 600);
+        expect(linear).toBe(0);
+        expect(indexed).toBe(linear);
+      });
+
+      it('includes y = -maxReach', () => {
+        const { linear, indexed } = both(800, 600, 100, -REACH, 100, 0);
+        expect(linear).toBe(0);
+        expect(indexed).toBe(linear);
+      });
+
+      /**
+       * Both axes at their exact endpoint at once.
+       *
+       * The cursor is offset diagonally rather than sitting on the canvas corner: a centre
+       * at `(width + 16, height + 16)` is 22.6 px from `(width, height)`, outside a 16 px
+       * radius, so a corner-to-corner probe would assert that neither picker finds it and
+       * prove nothing about the cell lookup.
+       *
+       * A cursor slightly outside the canvas is not a contrived input either — under
+       * pointer capture, `pointermove` keeps reporting once the drag leaves the element.
+       */
+      it('includes the positive corner, both axes at once', () => {
+        const { linear, indexed } = both(800, 600, 800 + REACH, 600 + REACH, 805, 605);
+        expect(linear).toBe(0);
+        expect(indexed).toBe(linear);
+      });
+
+      it('includes the negative corner', () => {
+        const { linear, indexed } = both(800, 600, -REACH, -REACH, -5, -5);
+        expect(linear).toBe(0);
+        expect(indexed).toBe(linear);
+      });
+
+      it('does the same at the default reach', () => {
+        // 800 + 2*32 = 864, also evenly divisible by 32.
+        const screen = Float32Array.from([832, 100]);
+        const depth = Float32Array.from([1]);
+        const idx = new ScreenIndex({ screen, depth }, 800, 600);
+        expect(idx.pick(800, 100, 32)).toBe(nearestProjectedIndex(screen, 800, 100, 32, depth));
+      });
+
+      it('still excludes the first point beyond the reach', () => {
+        // Inclusive at the endpoint is not the same as unbounded.
+        const screen = Float32Array.from([800 + REACH + CELL * 2, 100]);
+        const idx = new ScreenIndex({ screen, depth: Float32Array.from([1]) }, 800, 600, {
+          cell: CELL,
+          maxReach: REACH,
+        });
+        expect(idx.indexed).toBe(0);
+      });
+    });
+
     it('takes a larger reach for larger markers', () => {
       const screen = Float32Array.from([-60, 300]);
       const depth = Float32Array.from([1]);

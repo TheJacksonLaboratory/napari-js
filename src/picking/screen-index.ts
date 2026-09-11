@@ -88,9 +88,13 @@ export class ScreenIndex {
    * bug on that edge, while `ceil(800/32)` is exact and exposed it. An index that is
    * accidentally correct on two edges out of four is the harder kind of wrong.
    *
-   * So the origin starts at `-margin` and the grid is sized to cover the canvas plus the
-   * margin on both sides. Every point a marker could reach the cursor from is in a real
-   * cell, and nothing depends on whether the viewport divides evenly by the cell size.
+   * So the origin starts at `-margin` and the grid covers the canvas plus the margin on both
+   * sides. The column count is `floor(span / cell) + 1`, not `ceil(span / cell)`, and that
+   * `+ 1` is doing real work rather than being defensive: with `ceil`, a span that divides
+   * evenly by the cell leaves the EXACT upper endpoint one column past the end of the grid,
+   * so `x = width + maxReach` was dropped while `x = -maxReach` was kept. An asymmetry
+   * between the two ends of the same margin, and — like the edge bug above — visible only
+   * when the arithmetic happened to come out even.
    */
   constructor(projected: ProjectedPoints, vw: number, vh: number, opts: ScreenIndexOptions = {}) {
     this.screen = projected.screen;
@@ -99,8 +103,9 @@ export class ScreenIndex {
     this.margin = Math.max(0, opts.maxReach ?? DEFAULT_MAX_REACH);
     this.originX = -this.margin;
     this.originY = -this.margin;
-    this.cols = Math.max(1, Math.ceil((vw + 2 * this.margin) / this.cell));
-    this.rows = Math.max(1, Math.ceil((vh + 2 * this.margin) / this.cell));
+    // `floor + 1`, so the inclusive upper endpoint of the margin has a cell of its own.
+    this.cols = Math.floor((vw + 2 * this.margin) / this.cell) + 1;
+    this.rows = Math.floor((vh + 2 * this.margin) / this.cell) + 1;
 
     const n = this.screen.length >> 1;
     const cellCount = this.cols * this.rows;
