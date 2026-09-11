@@ -1,8 +1,10 @@
-import { Layer, type BlendMode } from './layer';
+import { Layer, type BlendMode, type Fit3D } from './layer';
 import { Colormap, resolveColormap } from '../color/colormap';
 import type { SurfaceBounds } from './surface-layer';
 
 export interface Points3DLayerOptions {
+  /** Whether adding this layer frames the orbit camera; overrides the viewer's default. */
+  fit?: Fit3D;
   name?: string;
   /** Colormap applied to per-point `values` (name or {@link Colormap}). */
   colormap?: Colormap | string;
@@ -14,10 +16,36 @@ export interface Points3DLayerOptions {
   opacity?: number;
   blending?: BlendMode;
   visible?: boolean;
+  /**
+   * Per-point opacity multiplier (length N, 0..1), on top of the layer's `opacity`.
+   *
+   * This is what lets a subset be emphasised without a second layer. With one opacity for
+   * the whole cloud, a host that wants to highlight a selection has to split the points
+   * into two layers, keep both in step through every colormap and size change, and accept
+   * that the two are depth-sorted against each other as separate draws. A per-point alpha
+   * is the same effect in one layer and one draw.
+   */
+  alphas?: Float32Array;
+  /** Per-point size multiplier (length N) on top of `size`, for making a subset findable. */
+  sizes?: Float32Array;
 }
 
-/** Interleaved GPU instance = [x, y, z, value] → 4 floats. */
-export const POINTS3D_INSTANCE_FLOATS = 4;
+/**
+ * Instance data is TWO buffers, not one interleaved six.
+ *
+ * They change on different clocks. Geometry and values move when the dataset or the colour
+ * source does; alpha and size move on every selection click. Interleaving means a click
+ * re-interleaves and re-uploads the positions too — measured at 3.7M points, that is a
+ * 32.9 ms rebuild and 88.8 MB across the bus to change 29.6 MB of style. Splitting them
+ * leaves the static 59.2 MB alone.
+ *
+ * Same reasoning {@link ShapesLayer} already uses for positions vs values.
+ */
+/** Static instance data = [x, y, z, value] → 4 floats. */
+export const POINTS3D_DATA_FLOATS = 4;
+
+/** Mutable per-point style = [alpha, sizeScale] → 2 floats. */
+export const POINTS3D_STYLE_FLOATS = 2;
 
 /**
  * A 3D scatter of point markers (napari Points-in-3D analog): `positions` (N×3, world/data coords,
@@ -31,13 +59,37 @@ export class Points3DLayer extends Layer {
   readonly count: number;
   /** N×3 point positions in world/data coords, x-fastest. */
   readonly positions: Float32Array;
-  /** Per-point scalar (length N) mapped through the colormap. */
-  readonly values: Float32Array;
+  private _values: Float32Array;
 
   colormapVersion = 0;
 
+  /**
+   * Bumped by every change to the instance data, so the visual re-uploads instead of the
+   * host discarding and re-adding the layer.
+   *
+   * Without it, changing what the points are coloured BY means building a new layer — and
+   * because adding a 3D layer frames the camera, that turns a recolour into a camera jump
+   * the host then has to undo. {@link PointsLayer} already works this way; this is the 3D
+   * layer catching up.
+   */
+  dataVersion = 0;
+
+  /**
+   * Bumped by every change to the per-point STYLE, separately from {@link dataVersion}.
+   *
+   * Two counters because the two halves change on different clocks: a selection click
+   * touches only alpha and size, and sharing one counter would make it re-upload the
+   * positions too.
+   */
+  styleVersion = 0;
+
+  private _alphas: Float32Array | null;
+  private _sizes: Float32Array | null;
+
   private _colormap: Colormap;
   private _contrastLimits: [number, number];
+  /** Whether the caller pinned the window, or it was derived from the values. */
+  private _contrastExplicit: boolean;
   private _gamma: number;
   private _size: number;
 
@@ -52,15 +104,69 @@ export class Points3DLayer extends Layer {
       throw new Error(`Points3D values length (${vals.length}) must equal point count (${n}).`);
     }
     this.positions = positions;
-    this.values = vals;
+    this._values = vals;
     this.count = n;
+    this._alphas = checkLength(opts.alphas, n, 'alphas');
+    this._sizes = checkLength(opts.sizes, n, 'sizes');
     this._colormap = resolveColormap(opts.colormap ?? 'viridis');
     this._contrastLimits = opts.contrastLimits ?? valueRange(vals);
+    this._contrastExplicit = opts.contrastLimits !== undefined;
     this._gamma = opts.gamma ?? 1;
     this._size = opts.size ?? 6;
     this._blending = opts.blending ?? 'translucent';
     if (opts.opacity !== undefined) this._opacity = opts.opacity;
     if (opts.visible !== undefined) this._visible = opts.visible;
+  }
+
+  /**
+   * Per-point opacity multiplier, or null when the layer is uniformly opaque.
+   *
+   * Assigning a wrong-length array throws rather than being padded or truncated: a short
+   * alpha array against a long cloud would silently hide the tail, which looks like missing
+   * data rather than like a bug in the caller.
+   */
+  get alphas(): Float32Array | null {
+    return this._alphas;
+  }
+  set alphas(value: Float32Array | null | undefined) {
+    this._alphas = checkLength(value ?? undefined, this.count, 'alphas');
+    this.styleVersion++;
+    this.changed.emit(this);
+  }
+
+  /** Per-point size multiplier, or null when every marker is `size`. */
+  get sizes(): Float32Array | null {
+    return this._sizes;
+  }
+  set sizes(value: Float32Array | null | undefined) {
+    this._sizes = checkLength(value ?? undefined, this.count, 'sizes');
+    this.styleVersion++;
+    this.changed.emit(this);
+  }
+
+  /**
+   * Per-point scalar (length N) mapped through the colormap.
+   *
+   * Read-only as a property and replaced through the setter, which is the whole point:
+   * a bare writable field lets `layer.values = next` succeed while `dataVersion` stays put,
+   * so the visual never re-uploads and the GPU keeps the old colours. Recolouring is not a
+   * new layer — same positions, same bounds, nothing for the camera to reframe — so this is
+   * the path that has to be safe.
+   */
+  get values(): Float32Array {
+    return this._values;
+  }
+  set values(next: Float32Array) {
+    checkLength(next, this.count, 'values');
+    this._values = next;
+    // A DERIVED window has to follow the values it was derived from. Otherwise replacing
+    // [10, 30] with [100, 300] keeps the old window and every point clamps to the top of
+    // the LUT — a uniformly saturated cloud, which reads as a colormap problem rather than
+    // a stale window. A window the caller pinned is theirs and is left alone.
+    // {@link ShapesLayer} already works this way; this is the 3D layer matching it.
+    if (!this._contrastExplicit) this._contrastLimits = valueRange(next);
+    this.dataVersion++;
+    this.changed.emit(this);
   }
 
   get colormap(): Colormap {
@@ -77,6 +183,7 @@ export class Points3DLayer extends Layer {
   }
   set contrastLimits(value: readonly [number, number]) {
     this._contrastLimits = [value[0], value[1]];
+    this._contrastExplicit = true;
     this.changed.emit(this);
   }
 
@@ -120,19 +227,54 @@ export class Points3DLayer extends Layer {
     return { min, max, center, radius };
   }
 
-  /** Interleave positions + values into the GPU instance buffer (N × [x, y, z, value]). */
+  /**
+   * The static half: N × [x, y, z, value]. Rebuilt when the geometry or the scalars change,
+   * which {@link dataVersion} tracks.
+   */
   buildInstanceData(): Float32Array {
     const n = this.count;
-    const out = new Float32Array(n * POINTS3D_INSTANCE_FLOATS);
+    const out = new Float32Array(n * POINTS3D_DATA_FLOATS);
     for (let i = 0; i < n; i++) {
-      const o = i * POINTS3D_INSTANCE_FLOATS;
+      const o = i * POINTS3D_DATA_FLOATS;
       out[o] = this.positions[i * 3];
       out[o + 1] = this.positions[i * 3 + 1];
       out[o + 2] = this.positions[i * 3 + 2];
-      out[o + 3] = this.values[i];
+      out[o + 3] = this._values[i];
     }
     return out;
   }
+
+  /**
+   * The mutable half: N × [alpha, sizeScale], tracked by {@link styleVersion}.
+   *
+   * Both default to 1, so a layer that sets neither renders exactly as it did before they
+   * existed — they multiply the layer-wide `opacity` and `size` rather than replacing them.
+   */
+  buildStyleData(): Float32Array {
+    const n = this.count;
+    const out = new Float32Array(n * POINTS3D_STYLE_FLOATS);
+    const alphas = this._alphas;
+    const sizes = this._sizes;
+    for (let i = 0; i < n; i++) {
+      const o = i * POINTS3D_STYLE_FLOATS;
+      out[o] = alphas ? alphas[i] : 1;
+      out[o + 1] = sizes ? sizes[i] : 1;
+    }
+    return out;
+  }
+}
+
+/** Validate a per-point array's length, so a mismatch surfaces here and not as a render. */
+function checkLength(
+  values: Float32Array | undefined,
+  n: number,
+  what: string,
+): Float32Array | null {
+  if (!values) return null;
+  if (values.length !== n) {
+    throw new Error(`Points3D ${what} length (${values.length}) must equal point count (${n}).`);
+  }
+  return values;
 }
 
 /** Min/max of a value array, widened to a unit window when degenerate. */

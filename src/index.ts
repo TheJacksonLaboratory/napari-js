@@ -21,7 +21,7 @@ export type { CameraDragMode } from './camera/camera3d';
 export { DEFAULT_WHEEL_ZOOM_SPEED, WHEEL_DELTA_CLAMP } from './camera/wheel';
 export { DEFAULT_ZOOM_SMOOTHING_MS } from './camera/zoom-smoothing';
 export { Layer } from './layers/layer';
-export type { BlendMode } from './layers/layer';
+export type { BlendMode, Fit3D } from './layers/layer';
 export { ImageLayer } from './layers/image-layer';
 export type { ImageLayerOptions, Interpolation } from './layers/image-layer';
 export { PointsLayer } from './layers/points-layer';
@@ -48,7 +48,15 @@ export {
   shapeVertexCount,
 } from './layers/shapes-layer';
 export type { ShapesLayerOptions, ShapeDraw, ShapeGeometry } from './layers/shapes-layer';
-export { nearestPointIndex } from './picking/pick';
+export { nearestPointIndex, nearestProjectedIndex } from './picking/pick';
+export type { ProjectedPickOptions } from './picking/pick';
+export { ScreenIndex, pickLinear, SCREEN_INDEX_MIN_POINTS } from './picking/screen-index';
+export type { ScreenIndexOptions } from './picking/screen-index';
+export { projectPoint, projectPoints } from './picking/project';
+export type { ProjectedPoint, ProjectedPoints } from './picking/project';
+export { unionBounds, resolveFit, framingFor, Fit3DState } from './scene/fit';
+export type { FramingView } from './scene/fit';
+export type { Bounded } from './scene/fit';
 
 // Color
 export {

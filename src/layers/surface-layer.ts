@@ -1,7 +1,9 @@
-import { Layer, type BlendMode } from './layer';
+import { Layer, type BlendMode, type Fit3D } from './layer';
 import { Colormap, resolveColormap } from '../color/colormap';
 
 export interface SurfaceLayerOptions {
+  /** Whether adding this layer frames the orbit camera; overrides the viewer's default. */
+  fit?: Fit3D;
   name?: string;
   /** Colormap applied to per-vertex `values` (name or {@link Colormap}). */
   colormap?: Colormap | string;

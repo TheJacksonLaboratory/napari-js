@@ -1,9 +1,12 @@
-import { Layer, type BlendMode } from './layer';
+import type { SurfaceBounds } from './surface-layer';
+import { Layer, type BlendMode, type Fit3D } from './layer';
 import { Colormap, resolveColormap } from '../color/colormap';
 
 export type VolumeRendering = 'mip' | 'translucent' | 'iso';
 
 export interface VolumeLayerOptions {
+  /** Whether adding this layer frames the orbit camera; overrides the viewer's default. */
+  fit?: Fit3D;
   name?: string;
   colormap?: Colormap | string;
   /** Normalization window in source-data units (default [0,255] for uint8). */
@@ -93,6 +96,27 @@ export class VolumeLayer extends Layer {
     this._voxelSize = [value[0], value[1], value[2]];
     this.geometryVersion++;
     this.changed.emit(this);
+  }
+
+  /**
+   * The rendered world box: `dims × voxelSize`, centred on the origin — which is where the
+   * volume visual puts it, so this and what is drawn agree.
+   *
+   * Exists so {@link Viewer.fitToLayers} can include a volume in the union it frames on. A
+   * point cloud sitting inside a reference volume is one scene, and framing on only the
+   * layers that happened to expose bounds would show part of it.
+   */
+  bounds(): SurfaceBounds {
+    const [sx, sy, sz] = this._voxelSize;
+    const hx = (this.width * sx) / 2;
+    const hy = (this.height * sy) / 2;
+    const hz = (this.depth * sz) / 2;
+    return {
+      min: [-hx, -hy, -hz],
+      max: [hx, hy, hz],
+      center: [0, 0, 0],
+      radius: Math.hypot(hx, hy, hz) || 1,
+    };
   }
 
   get contrastLimits(): [number, number] {
