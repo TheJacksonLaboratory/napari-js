@@ -61,6 +61,10 @@ All notable changes to napari-js are documented here. The format roughly follows
   its point form, with no `getBoundingClientRect()` read. An SVG overlay sets one
   `matrix(...)` per camera change instead of a layout read per vertex.
 
+- **`visibleTiles(..., scales, { order, limit })`**: `order: 'center-out'` lists the tiles nearest
+  the view's centre first (ties row-major) so a streaming consumer fills the middle of the screen
+  first; `limit` keeps the first N after ordering. Without options the list is unchanged.
+
 ### Changed
 
 - **`addVolume` frames like the other 3D adders**: on `layer.bounds()` through `framingFor` (field

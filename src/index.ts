@@ -143,7 +143,7 @@ export {
   visibleTiles,
   worldViewport,
 } from './io/pyramid';
-export type { Rect, VisibleTile } from './io/pyramid';
+export type { Rect, VisibleTile, VisibleTilesOptions } from './io/pyramid';
 export { LruCache } from './cache/lru';
 
 export { VERSION } from './version';
