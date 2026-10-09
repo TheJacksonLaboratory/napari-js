@@ -4,7 +4,7 @@ import { SurfaceLayer } from '../src/layers/surface-layer';
 import { Points3DLayer } from '../src/layers/points3d-layer';
 import { Camera3D } from '../src/camera/camera3d';
 import { identity } from '../src/math/mat4';
-import { mapScalar, windowGamma } from '../src/color/display-pipeline';
+import { mapScalar, windowGamma, WINDOW_EPSILON } from '../src/color/display-pipeline';
 import { resolveColormap } from '../src/color/colormap';
 import { MultiChannelVolumeView, type VolumeHost } from '../src/views/multichannel-volume-view';
 import { packVolumeUniforms, VOLUME_UNIFORM_FLOATS } from '../src/visuals/volume-visual';
@@ -120,6 +120,26 @@ describe('invert matches the CPU reference (windowGamma)', () => {
     ['surface', SURFACE_SHADER, 'u.flags.y'],
     ['points3d', POINTS3D_SHADER, 'u.flags.y'],
   ] as const;
+  it('points3d shader normalizes the window with windowGamma’s epsilon, so colorAt matches it', () => {
+    // A valid but narrow window: 1e-6 in the shader vs 1e-8 on the CPU mapped the midpoint to
+    // 0.25 on screen and 0.5 in colorAt.
+    expect(POINTS3D_SHADER).toContain(`max(hi - lo, ${WINDOW_EPSILON})`);
+    const p = new Points3DLayer(POS, new Float32Array([2.5e-7, 0, 5e-7]), {
+      contrastLimits: [0, 5e-7],
+      colormap: 'gray',
+    });
+    expect(p.colorAt(0)[0]).toBeCloseTo(0.5, 5);
+  });
+
+  it('volume MIP judges emptiness after gamma and colours from the pre-gamma value', () => {
+    // pow(0.5, 1000) underflows to 0 in f32: the ray must stay empty (discarded), as it was before
+    // invert, while shade() still gets the pre-gamma maximum so invert precedes gamma.
+    expect(VOLUME_SHADER).toMatch(
+      /if \(pow\(maxT, u\.params\.z\) <= 0\.0\) \{ discard; \}\s*col = shade\(maxT\);/,
+    );
+    expect(VOLUME_SHADER).not.toMatch(/if \(maxT <= 0\.0\)/);
+  });
+
   for (const [name, code, flag] of shaders) {
     it(`${name} shader: window → invert (${flag}) → gamma`, () => {
       const flip = /if \((u\.[\w.]+) > 0\.5\) \{ (\w+) = 1\.0 - \2; \}/.exec(code);

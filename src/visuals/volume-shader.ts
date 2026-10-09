@@ -126,7 +126,10 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
   }
 
   if (mode < 0.5) {
-    if (maxT <= 0.0) { discard; }
+    // Emptiness is judged after gamma, as before invert existed: a large gamma that underflows
+    // the brightest sample to 0 still leaves the ray empty. shade() takes the pre-gamma value
+    // so invert keeps its place ahead of gamma.
+    if (pow(maxT, u.params.z) <= 0.0) { discard; }
     col = shade(maxT);
     acc = opacity;
   }

@@ -1,3 +1,5 @@
+import { WINDOW_EPSILON } from '../color/display-pipeline';
+
 // 3D scatter: instanced screen-facing billboards at 3D positions, sized in screen pixels, with an
 // antialiased disc SDF and per-point value → windowed → invert → gamma → colormap LUT. Depth is written at
 // the point's center depth so points occlude correctly under the orbit camera. Premultiplied output.
@@ -67,8 +69,9 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
 
   let lo = u.window.x;
   let hi = u.window.y;
-  // window → invert → gamma, the order of windowGamma() and the image shader.
-  var t = clamp((in.value - lo) / max(hi - lo, 1e-6), 0.0, 1.0);
+  // window → invert → gamma, the order of windowGamma() and the image shader, with its
+  // epsilon too, so colorAt() returns the rendered colour even for a very narrow window.
+  var t = clamp((in.value - lo) / max(hi - lo, ${WINDOW_EPSILON}), 0.0, 1.0);
   if (u.flags.y > 0.5) { t = 1.0 - t; }
   let g = pow(t, u.window.z);
   let mapped = textureSample(lut, lutSampler, vec2<f32>(g, 0.5)).rgb;

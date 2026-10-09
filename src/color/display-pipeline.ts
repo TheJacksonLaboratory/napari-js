@@ -1,6 +1,13 @@
 import type { Colormap, RGB } from './colormap';
 
 /**
+ * Floor on the contrast-window width, so a degenerate window (`hi === lo`) doesn't divide by
+ * zero. A shader whose CPU reference is {@link windowGamma} must use this same value, or the
+ * two map a valid narrow window differently.
+ */
+export const WINDOW_EPSILON = 1e-8;
+
+/**
  * CPU reference for the scalar display math the `image-colormap` WGSL shader performs:
  * window → invert → gamma. Returns the normalized LUT coordinate `t` in 0..1. Kept pure and
  * tested so the shader has a ground truth (see docs/04) and so histograms/readback can reuse
@@ -13,7 +20,7 @@ export function windowGamma(
   gamma: number,
   invert: boolean,
 ): number {
-  const denom = Math.max(climHi - climLo, 1e-8);
+  const denom = Math.max(climHi - climLo, WINDOW_EPSILON);
   let t = clamp01((value - climLo) / denom);
   if (invert) t = 1 - t;
   return Math.pow(t, gamma);
