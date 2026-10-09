@@ -1,5 +1,6 @@
 import { Layer, type BlendMode } from './layer';
 import { type Colormap, resolveColormap } from '../color/colormap';
+import { mapScalar, clamp01 } from '../color/display-pipeline';
 
 export type RGBA = [number, number, number, number];
 
@@ -18,8 +19,15 @@ export interface ShapesLayerOptions {
   /** Value window mapped onto the colormap. Defaults to the values' own range. */
   contrastLimits?: [number, number];
   gamma?: number;
-  /** Flat colour, used when no `values` are supplied. */
+  /** Flat colour, used when no `values` (and no {@link faceColor}) are supplied. */
   color?: RGBA;
+  /**
+   * Explicit colour per shape — napari Shapes' `face_color`: one RGBA (0..1) for every
+   * shape, or a packed `Float32Array` of per-shape RGBA (length `4 · shapeCount`,
+   * `[r0, g0, b0, a0, r1, …]`). When set it WINS over `values` + `colormap` (and `color`),
+   * as `Points3DLayer.colors` does; null restores them. Applies to either draw mode.
+   */
+  faceColor?: RGBA | Float32Array | null;
   opacity?: number;
   blending?: BlendMode;
   visible?: boolean;
@@ -276,10 +284,13 @@ export class ShapesLayer extends Layer {
   /** Bumped when the per-shape values change, so the visual rewrites only them. */
   valueVersion = 0;
   colormapVersion = 0;
+  /** Bumped when {@link faceColor} is replaced, so the visual re-uploads the colours. */
+  faceColorVersion = 0;
 
   private _draw: ShapeDraw;
   private _values: Float32Array | null;
   private _color: RGBA;
+  private _faceColor: RGBA | Float32Array | null;
   private _colormap: Colormap;
   private _contrastLimits: [number, number];
   /** False while the window is DERIVED from the values, so replacing them has to
@@ -326,6 +337,7 @@ export class ShapesLayer extends Layer {
     this._draw = opts.draw ?? 'outline';
     this._values = opts.values ?? null;
     this._color = opts.color ?? [1, 1, 1, 1];
+    this._faceColor = checkFaceColor(opts.faceColor ?? null, this.shapeCount);
     this._colormap = resolveColormap(opts.colormap ?? 'viridis');
     this._contrastExplicit = opts.contrastLimits !== undefined;
     this._contrastLimits = opts.contrastLimits ?? valueRange(this._values);
@@ -371,6 +383,66 @@ export class ShapesLayer extends Layer {
   set color(value: RGBA) {
     this._color = value;
     this.changed.emit(this);
+  }
+
+  /**
+   * Per-shape colours (see {@link ShapesLayerOptions.faceColor}), or null to colour by
+   * `values`/`color`. The packed array is kept by reference and uploaded as is (16 bytes per
+   * shape, not per vertex), so a recolour re-expands nothing; mutate a copy and assign it.
+   */
+  get faceColor(): RGBA | Float32Array | null {
+    return this._faceColor;
+  }
+  set faceColor(value: RGBA | Float32Array | null | undefined) {
+    const next = checkFaceColor(value ?? null, this.shapeCount);
+    // The per-vertex attribute carries the shape index for per-shape colours and the
+    // value otherwise, so only switching between the two rewrites it.
+    if (next instanceof Float32Array !== this._faceColor instanceof Float32Array) {
+      this.valueVersion++;
+    }
+    this._faceColor = next;
+    this.faceColorVersion++;
+    this.changed.emit(this);
+  }
+
+  /**
+   * How the shader colours this layer: `'faceColor'` (per-shape RGBA from
+   * {@link faceColor}), `'values'` (`values` through the colormap) or `'flat'` (one colour —
+   * a single-RGBA `faceColor`, else `color`).
+   */
+  colorMode(): 'faceColor' | 'values' | 'flat' {
+    if (this._faceColor instanceof Float32Array) return 'faceColor';
+    if (this._faceColor) return 'flat';
+    return this._values ? 'values' : 'flat';
+  }
+
+  /**
+   * The straight (not premultiplied) RGBA shape `i` is drawn with, before the layer
+   * `opacity` — the CPU reference for the shader's colour choice:
+   *
+   *  - per-shape {@link faceColor}: `faceColor[i]`;
+   *  - a single-RGBA `faceColor`: that colour;
+   *  - `values`: `colormap(window → gamma (values[i]))` with `color`'s alpha;
+   *  - otherwise `color`.
+   */
+  colorAt(i: number): RGBA {
+    const fc = this._faceColor;
+    if (fc instanceof Float32Array) {
+      const o = i * 4;
+      return [fc[o], fc[o + 1], fc[o + 2], clamp01(fc[o + 3])];
+    }
+    if (fc) return [fc[0], fc[1], fc[2], fc[3]];
+    const c = this._color;
+    if (!this._values) return [c[0], c[1], c[2], c[3]];
+    const [lo, hi] = this._contrastLimits;
+    const [r, g, b] = mapScalar(this._values[i], {
+      climLo: lo,
+      climHi: hi,
+      gamma: this._gamma,
+      invert: false,
+      colormap: this._colormap,
+    });
+    return [r, g, b, c[3]];
   }
 
   get colormap(): Colormap {
@@ -420,13 +492,14 @@ export class ShapesLayer extends Layer {
   /**
    * The per-vertex scalar the shader maps through the colormap.
    *
-   * With `values`, each vertex takes its shape's value. Without them the layer is a
-   * flat colour, and the attribute is unused — it is still written (as the shape
-   * index) so one pipeline serves both cases.
+   * With `values`, each vertex takes its shape's value. With per-shape {@link faceColor}
+   * it is the shape index, which the shader looks the colour up by (exact in f32 up to
+   * 2²⁴ shapes). Otherwise the layer is a flat colour and the attribute is unused — it is
+   * still written (as the shape index) so one pipeline serves every case.
    */
   buildVertexValues(shapeIds: Uint32Array): Float32Array {
     const out = new Float32Array(shapeIds.length);
-    const values = this._values;
+    const values = this.colorMode() === 'values' ? this._values : null;
     for (let i = 0; i < shapeIds.length; i++) {
       out[i] = values ? values[shapeIds[i]] : shapeIds[i];
     }
@@ -451,6 +524,23 @@ export class ShapesLayer extends Layer {
     }
     return { min: [minX, minY], max: [maxX, maxY] };
   }
+}
+
+/**
+ * Validate a per-shape colour array's length at the assignment, so a mismatch throws rather
+ * than colouring the tail with whatever the GPU reads past the end.
+ */
+function checkFaceColor(
+  color: RGBA | Float32Array | null,
+  shapeCount: number,
+): RGBA | Float32Array | null {
+  if (color instanceof Float32Array && color.length !== shapeCount * 4) {
+    throw new Error(
+      `ShapesLayer: faceColor length (${color.length}) must equal 4 × shape count ` +
+        `(${shapeCount * 4}).`,
+    );
+  }
+  return color;
 }
 
 /** Values' own range, widened when flat so the window never divides by zero. */

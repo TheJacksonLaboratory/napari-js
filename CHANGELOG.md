@@ -38,6 +38,11 @@ All notable changes to napari-js are documented here. The format roughly follows
   per point (`Uint8Array`, `pointSymbolCode(name)`; 255 = the layer `symbol`), drawn as SDFs with
   the existing border. `pointSymbolDistance` is the CPU reference. `borderWidth` is now a uniform.
 
+- **Per-shape colours on `ShapesLayer`**: `faceColor` (option + setter), napari Shapes'
+  `face_color` — one RGBA or a packed `Float32Array(4 · shapeCount)`. When set it wins over
+  `values` + `colormap`; null restores them. Uploaded per shape (a storage buffer), so a recolour
+  re-expands nothing. `colorAt(i)` / `colorMode()` are the CPU reference.
+
 ## [0.13.0]
 
 ### Added
