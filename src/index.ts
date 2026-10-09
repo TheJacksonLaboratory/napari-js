@@ -95,6 +95,7 @@ export {
   lutColormap,
 } from './color/colormap';
 export type { RGB, ColorStop } from './color/colormap';
+export { parseColor } from './color/parse';
 export { buildLut, LUT_SIZE } from './color/lut';
 export { buildLabelLut } from './color/label-colormap';
 export { windowGamma, mapScalar, mapScalarRGBA, additiveComposite } from './color/display-pipeline';

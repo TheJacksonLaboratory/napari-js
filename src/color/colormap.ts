@@ -1,4 +1,5 @@
 import { VIRIDIS_LUT, MAGMA_LUT, INFERNO_LUT } from './matplotlib-luts';
+import { parseColor } from './parse';
 
 export type RGB = [number, number, number];
 
@@ -155,19 +156,26 @@ export function colormapFromLut(
 }
 
 /**
- * Build a black→`hex` ramp `Colormap` — a channel "tint" for additive multichannel compositing
- * (fluorescence). Accepts `#rgb` / `#rrggbb` (the leading `#` is optional); unparseable channels
- * fall back to 0, and an empty/missing value defaults to white.
+ * Build a black→`color` ramp `Colormap` — a channel "tint" for additive multichannel compositing
+ * (fluorescence). Accepts any colour {@link parseColor} does (`#rgb`, `#rrggbb`, `rgb()`, named
+ * …) and, for backwards compatibility, bare hex digits without the `#`. Alpha is ignored. An
+ * unparseable value gives black; an empty/missing one defaults to white. The name is
+ * `tint-rrggbb`.
  */
-export function tintColormap(hex: string): Colormap {
-  const h = (hex || '#ffffff').replace('#', '');
-  const full = h.length === 3 ? h[0] + h[0] + h[1] + h[1] + h[2] + h[2] : h;
-  const r = parseInt(full.slice(0, 2), 16) || 0;
-  const g = parseInt(full.slice(2, 4), 16) || 0;
-  const b = parseInt(full.slice(4, 6), 16) || 0;
-  return new Colormap(`tint-${full}`, [
+export function tintColormap(color: string): Colormap {
+  const s = (color || '#ffffff').trim();
+  const rgba = parseColor(/^[0-9a-f]{3,8}$/i.test(s) ? `#${s}` : s) ?? [0, 0, 0, 1];
+  const rgb: RGB = [rgba[0], rgba[1], rgba[2]];
+  const name = rgb
+    .map((v) =>
+      Math.round(v * 255)
+        .toString(16)
+        .padStart(2, '0'),
+    )
+    .join('');
+  return new Colormap(`tint-${name}`, [
     { t: 0, color: [0, 0, 0] },
-    { t: 1, color: [r / 255, g / 255, b / 255] },
+    { t: 1, color: rgb },
   ]);
 }
 

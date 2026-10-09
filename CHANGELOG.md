@@ -98,10 +98,19 @@ All notable changes to napari-js are documented here. The format roughly follows
 - **`autoContrastLimits(histogram, saturation)`**: saturation-based auto contrast that clips a
   fraction at each end and ignores a dominant padding bin. In the main entry and `geometry`.
 
+- **`parseColor(css): RGBA | null`** (napari's `transform_color` for one colour): `#rgb`, `#rgba`,
+  `#rrggbb`, `#rrggbbaa`, `rgb()`/`rgba()` (comma, space or slash syntax, percentages) and the basic
+  named colours, including matplotlib's `r g b c m y k w`. Null when unparseable, so each caller
+  picks its fallback.
+
 ### Changed
 
 - **`VIRIDIS` and `MAGMA` are matplotlib's exact 256-entry tables**, not 6-anchor approximations.
   Costs the main bundle about 3 kB gzip (with `INFERNO`).
+
+- **`tintColormap` parses with `parseColor`**, so it also takes `rgb()` and named colours. Bare hex
+  without `#` still works; a partly invalid hex now gives black as a whole rather than per channel,
+  and the name is always lower-case `tint-rrggbb`.
 
 ## [0.13.0]
 
