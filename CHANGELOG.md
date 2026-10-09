@@ -27,6 +27,11 @@ All notable changes to napari-js are documented here. The format roughly follows
   `2 · distance · tan(fov / 2) / viewportHeight` — the 3D analog of `1 / zoom`, for a scale bar.
   `pan` now uses it instead of inlining the formula; its behaviour is unchanged.
 
+- **`napari-js/testing`**, a GPU-free test double: the whole public API with `Viewer` bound to
+  `HeadlessViewer` — the real model, layers, `add*`, framing and canvas maths, no device, readback
+  a blank frame. Replaces hand-written stubs that drift from the library. `Viewer`'s GPU-free half
+  moved into a shared `ViewerBase`, so the two cannot diverge; the main bundle is still one file.
+
 ## [0.13.0]
 
 ### Added

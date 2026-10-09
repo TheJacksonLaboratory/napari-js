@@ -70,6 +70,27 @@ A layer's data is any `TextureSource` input: an `ImageBitmap`, a typed-array des
 (`{ kind: 'typed', width, height, channels, dtype, data }`), or a pyramidal
 `{ kind: 'tiled', …, fetchTile }`. Full API in [docs/02](./docs/02-public-api.md).
 
+### Testing without a GPU: `napari-js/testing`
+
+Unit tests (Vitest, Jest) have no WebGPU. `napari-js/testing` is the whole public API with `Viewer`
+bound to `HeadlessViewer`: the real `ViewerModel`, `LayerList`, cameras and layers, the real
+`add*`, `fitToLayers` and `worldToCanvas`, with no device. Nothing is drawn, `ready` is already
+resolved, and readback returns a blank frame.
+
+```ts
+import { HeadlessViewer } from 'napari-js/testing';
+
+const viewer = new HeadlessViewer({ canvasRect: { left: 100, top: 50, width: 800, height: 600 } });
+const cloud = viewer.addPoints3D(positions); // a real Points3DLayer, validated as usual
+viewer.fitToLayers(); // frames exactly as Viewer does
+viewer.worldToCanvas(x, y); // includes the canvas offset
+```
+
+To run code that does `new Viewer({ canvas })` unchanged, point the test runner's `napari-js` at
+it: Jest `moduleNameMapper: { '^napari-js$': '<rootDir>/node_modules/napari-js/dist/testing.js' }`
+(and let Jest transform `napari-js`, which is ESM), or a Vitest `resolve.alias`. Layers it builds
+are instances of the same classes `napari-js` exports.
+
 ## Develop
 
 ```bash
