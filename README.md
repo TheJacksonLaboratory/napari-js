@@ -105,6 +105,19 @@ const nav = new NavigatorOverlay(host, viewer, { worldWidth: w, worldHeight: h, 
 scaleBarFor(pxPerWorld, umPerWorld, 120); // the pure maths, for a bar drawn elsewhere
 ```
 
+### Exact matplotlib colormaps: `napari-js/colormaps`
+
+All 83 matplotlib colormaps as exact 256-entry RGB tables, one tree-shakeable `Uint8Array(768)` per
+map, so a bundle keeps only the maps it imports (about 1 KB each). The main entry's `VIRIDIS`,
+`MAGMA` and `INFERNO` already use the exact tables.
+
+```ts
+import { TURBO_LUT, lutColormap, matplotlibColormap } from 'napari-js/colormaps';
+
+viewer.addImage(img, { colormap: lutColormap('turbo', TURBO_LUT) });
+matplotlibColormap('RdBu'); // by name, via the COLORMAP_LUTS registry (keeps every map)
+```
+
 ## Develop
 
 ```bash

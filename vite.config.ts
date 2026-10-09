@@ -5,13 +5,13 @@ import dts from 'vite-plugin-dts';
 // the playground. Both use this config; the dev server ignores `build.lib`.
 //
 // Entries: the library (`napari-js`), its GPU-free test double (`napari-js/testing`), and
-// opt-in subpaths (`napari-js/overlays`). A subpath entry must use the SAME classes as the
+// opt-in subpaths (`napari-js/overlays`, `napari-js/colormaps`). A subpath entry must use the SAME classes as the
 // library, not bundled copies, or `instanceof` fails across the two. Left alone, Rollup would
 // split the modules both reach into a third, hashed chunk and turn `napari-js.js` into half a library. Instead every library module is pinned to
 // the `napari-js` chunk (which holds its entry, so it stays `napari-js.js`), and
 // `allow-extension` lets that chunk export the few internals the subpath entries import. The
 // main bundle stays one file, and each subpath's own code is only in its own file.
-const SUBPATHS = ['testing', 'overlays'];
+const SUBPATHS = ['testing', 'overlays', 'colormaps'];
 const isSubpathModule = (id: string): boolean =>
   SUBPATHS.some((dir) => id.includes(`/src/${dir}/`));
 

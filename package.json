@@ -40,6 +40,10 @@
     "./overlays": {
       "types": "./dist/overlays/index.d.ts",
       "import": "./dist/overlays.js"
+    },
+    "./colormaps": {
+      "types": "./dist/colormaps/index.d.ts",
+      "import": "./dist/colormaps.js"
     }
   },
   "scripts": {

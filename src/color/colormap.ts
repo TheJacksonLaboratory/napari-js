@@ -1,3 +1,5 @@
+import { VIRIDIS_LUT, MAGMA_LUT, INFERNO_LUT } from './matplotlib-luts';
+
 export type RGB = [number, number, number];
 
 /**
@@ -81,24 +83,30 @@ export const RED = ramp('red', [1, 0, 0]);
 export const GREEN = ramp('green', [0, 1, 0]);
 export const BLUE = ramp('blue', [0, 0, 1]);
 
-// Compact perceptual maps (a handful of anchors, interpolated).
-export const VIRIDIS = new Colormap('viridis', [
-  { t: 0.0, color: [0.267, 0.005, 0.329] },
-  { t: 0.25, color: [0.275, 0.227, 0.494] },
-  { t: 0.5, color: [0.149, 0.443, 0.541] },
-  { t: 0.75, color: [0.122, 0.633, 0.531] },
-  { t: 0.9, color: [0.478, 0.821, 0.318] },
-  { t: 1.0, color: [0.993, 0.906, 0.144] },
-]);
+/**
+ * Build a `Colormap` from a flat RGB lookup table — `[r0, g0, b0, r1, g1, b1, …]`, bytes
+ * 0..`maxValue` (default 255) — with evenly spaced stops (`t = i / (n - 1)`). This is the form
+ * the exact matplotlib tables in `napari-js/colormaps` take (`Uint8Array(768)`); sampling the
+ * result at `i / (n - 1)` returns entry `i` exactly, so `buildLut` reproduces the table.
+ */
+export function lutColormap(name: string, lut: ArrayLike<number>, maxValue = 255): Colormap {
+  const n = Math.floor(lut.length / 3);
+  if (n < 2 || lut.length % 3 !== 0) {
+    throw new Error(`lutColormap("${name}") needs 3·n RGB values with n >= 2, got ${lut.length}.`);
+  }
+  const m = maxValue || 255;
+  const stops: ColorStop[] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    stops[i] = { t: i / (n - 1), color: [lut[i * 3] / m, lut[i * 3 + 1] / m, lut[i * 3 + 2] / m] };
+  }
+  return new Colormap(name, stops);
+}
 
-export const MAGMA = new Colormap('magma', [
-  { t: 0.0, color: [0.001, 0.0, 0.014] },
-  { t: 0.25, color: [0.232, 0.059, 0.437] },
-  { t: 0.5, color: [0.55, 0.161, 0.506] },
-  { t: 0.75, color: [0.868, 0.288, 0.41] },
-  { t: 0.9, color: [0.987, 0.6, 0.392] },
-  { t: 1.0, color: [0.987, 0.991, 0.749] },
-]);
+// Perceptual maps: matplotlib's exact 256-entry tables (≈1 KB each). Every other matplotlib map
+// is in the opt-in `napari-js/colormaps` subpath.
+export const VIRIDIS = /* @__PURE__ */ lutColormap('viridis', VIRIDIS_LUT);
+export const MAGMA = /* @__PURE__ */ lutColormap('magma', MAGMA_LUT);
+export const INFERNO = /* @__PURE__ */ lutColormap('inferno', INFERNO_LUT);
 
 export const NAMED_COLORMAPS: Record<string, Colormap> = {
   gray: GRAY,
@@ -108,6 +116,7 @@ export const NAMED_COLORMAPS: Record<string, Colormap> = {
   blue: BLUE,
   viridis: VIRIDIS,
   magma: MAGMA,
+  inferno: INFERNO,
 };
 
 /** Resolve a colormap name or pass through a `Colormap`. Throws on an unknown name. */

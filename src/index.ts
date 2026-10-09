@@ -91,6 +91,8 @@ export {
   BLUE,
   VIRIDIS,
   MAGMA,
+  INFERNO,
+  lutColormap,
 } from './color/colormap';
 export type { RGB, ColorStop } from './color/colormap';
 export { buildLut, LUT_SIZE } from './color/lut';

@@ -83,6 +83,17 @@ All notable changes to napari-js are documented here. The format roughly follows
   `visibleWorldRect`), each `(host, viewer, opts)` with `dispose()`. The pure `scaleBarFor` snaps
   to the nearest 1/2/5 × 10ⁿ and `formatLength` picks the unit. A second entry, like `testing`.
 
+- **`napari-js/colormaps`**: all 83 matplotlib colormaps as exact 256-entry tables, one
+  tree-shakeable `Uint8Array(768)` export each (base64 in source), plus `COLORMAP_LUTS`,
+  `matplotlibColormap(name)` and `lutColormap(name, lut)` (also in the main entry). Licences are
+  noted in `src/colormaps/luts.ts`.
+
+- **`INFERNO`** colormap (`'inferno'` by name).
+
+### Changed
+
+- **`VIRIDIS` and `MAGMA` are matplotlib's exact 256-entry tables**, not 6-anchor approximations.
+  Costs the main bundle about 3 kB gzip (with `INFERNO`).
 
 ## [0.13.0]
 
