@@ -53,11 +53,25 @@ export class Camera3D {
   }
 
   /**
+   * World units spanned by one CSS pixel at the target's depth, for a viewport `viewportHeight`
+   * CSS pixels tall: `2 · distance · tan(fov / 2) / viewportHeight`.
+   *
+   * The perspective analog of the 2D camera's `1 / zoom`, exact on the plane through the target
+   * facing the camera (nearer things look bigger, farther smaller). It is what a 3D scale bar
+   * needs, and what {@link pan} uses so a drag tracks the cursor. Heights below 1 are treated
+   * as 1, so an unsized canvas gives a finite value.
+   */
+  worldPerPixel(viewportHeight: number): number {
+    return (2 * this._distance * Math.tan(this.fov / 2)) / Math.max(viewportHeight, 1);
+  }
+
+  /**
    * Pan the target in the camera's view plane by screen-pixel deltas (drag). `viewportHeight`
-   * sets the world-per-pixel scale at the target depth so panning tracks the cursor.
+   * sets the world-per-pixel scale at the target depth ({@link worldPerPixel}) so panning
+   * tracks the cursor.
    */
   pan(dxScreen: number, dyScreen: number, viewportHeight: number): void {
-    const worldPerPx = (2 * this._distance * Math.tan(this.fov / 2)) / Math.max(viewportHeight, 1);
+    const worldPerPx = this.worldPerPixel(viewportHeight);
     const eye = this.eye();
     // Orthonormal camera basis (forward, right, up).
     const f = normalize([

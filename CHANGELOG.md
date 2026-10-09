@@ -23,6 +23,10 @@ All notable changes to napari-js are documented here. The format roughly follows
   colormap. Replaces reversing the colormap, which differs once gamma ≠ 1. On a volume only the
   colour inverts; the MIP maximum, translucent alpha and iso threshold use the un-inverted value.
 
+- **`Camera3D.worldPerPixel(viewportHeight)`**: world units per CSS pixel at the target's depth,
+  `2 · distance · tan(fov / 2) / viewportHeight` — the 3D analog of `1 / zoom`, for a scale bar.
+  `pan` now uses it instead of inlining the formula; its behaviour is unchanged.
+
 ## [0.13.0]
 
 ### Added
