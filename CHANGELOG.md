@@ -103,6 +103,9 @@ All notable changes to napari-js are documented here. The format roughly follows
   named colours, including matplotlib's `r g b c m y k w`. Null when unparseable, so each caller
   picks its fallback.
 
+- **`LruCache<V, K = string>`**: the key type is generic (numbers, objects by identity…), so
+  numeric-keyed caches can use it too. `V` stays first, so `LruCache<V>` is unchanged.
+
 ### Changed
 
 - **`VIRIDIS` and `MAGMA` are matplotlib's exact 256-entry tables**, not 6-anchor approximations.
