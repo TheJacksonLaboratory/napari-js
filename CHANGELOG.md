@@ -71,13 +71,6 @@ All notable changes to napari-js are documented here. The format roughly follows
   uint8 volume with progress; `bitmapToScalar`/`rgbaToScalar` decode images. All cancel via
   `AbortSignal`, which is also passed to `fetchTile(key, signal?)`.
 
-### Changed
-
-- **`addVolume` frames like the other 3D adders**: on `layer.bounds()` through `framingFor` (field
-  of view and canvas aspect), not `Camera3D.frame`'s `max(w, h, d) × 1.8`. Same target (the
-  origin); the distance now fits the box's half-diagonal, so the camera sits further back
-  (about 26% for a cube on a landscape canvas) and a portrait canvas no longer clips.
-
 - **`napari-js/overlays`**: `ScaleBarOverlay` (2D zoom or the 3D camera's `worldPerPixel`),
   `AxesLabelsOverlay` (projected 3D axis text) and `NavigatorOverlay` (minimap on
   `visibleWorldRect`), each `(host, viewer, opts)` with `dispose()`. The pure `scaleBarFor` snaps
@@ -107,6 +100,11 @@ All notable changes to napari-js are documented here. The format roughly follows
   numeric-keyed caches can use it too. `V` stays first, so `LruCache<V>` is unchanged.
 
 ### Changed
+
+- **`addVolume` frames like the other 3D adders**: on `layer.bounds()` through `framingFor` (field
+  of view and canvas aspect), not `Camera3D.frame`'s `max(w, h, d) × 1.8`. Same target (the
+  origin); the distance now fits the box's half-diagonal, so the camera sits further back
+  (about 26% for a cube on a landscape canvas) and a portrait canvas no longer clips.
 
 - **`VIRIDIS` and `MAGMA` are matplotlib's exact 256-entry tables**, not 6-anchor approximations.
   Costs the main bundle about 3 kB gzip (with `INFERNO`).
