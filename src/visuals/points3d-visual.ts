@@ -1,5 +1,10 @@
 import type { Points3DLayer } from '../layers/points3d-layer';
-import { POINTS3D_DATA_FLOATS, POINTS3D_STYLE_FLOATS } from '../layers/points3d-layer';
+import {
+  POINTS3D_DATA_FLOATS,
+  POINTS3D_STYLE_FLOATS,
+  POINTS3D_COLOR_FLOATS,
+} from '../layers/points3d-layer';
+import type { Mat4 } from '../math/mat4';
 import type { BlendMode } from '../layers/layer';
 import { DEPTH_FORMAT, type LayerVisual, type RenderView } from './layer-visual';
 import { buildLut, LUT_SIZE } from '../color/lut';
@@ -10,8 +15,37 @@ import { blendStateFor } from './blend';
 // style half with every selection click. See the note in points3d-layer.ts.
 const DATA_STRIDE = POINTS3D_DATA_FLOATS * 4; // [x,y,z,value] → 16 bytes
 const STYLE_STRIDE = POINTS3D_STYLE_FLOATS * 4; // [alpha,sizeScale] → 8 bytes
-const UNIFORM_FLOATS = 24; // mat4(16) + params vec4 + window vec4
-const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
+const COLOR_STRIDE = POINTS3D_COLOR_FLOATS * 4; // [r,g,b,a] → 16 bytes
+/** mat4(16) + params vec4 + window vec4 + flags vec4. */
+export const POINTS3D_UNIFORM_FLOATS = 28;
+const UNIFORM_BYTES = POINTS3D_UNIFORM_FLOATS * 4;
+
+/**
+ * Pack the per-frame uniforms (layout in points3d-shader.ts) into `out`. Pure, so the packing —
+ * and in particular which flags reach the shader — is testable without a device.
+ */
+export function packPoints3DUniforms(
+  out: Float32Array,
+  layer: Points3DLayer,
+  viewProjection: Mat4,
+  vw: number,
+  vh: number,
+): void {
+  out.set(viewProjection, 0);
+  out[16] = vw;
+  out[17] = vh;
+  out[18] = layer.size;
+  out[19] = layer.opacity;
+  const [lo, hi] = layer.contrastLimits;
+  out[20] = lo;
+  out[21] = hi;
+  out[22] = layer.gamma;
+  out[23] = 0;
+  out[24] = layer.colors ? 1 : 0;
+  out[25] = 0;
+  out[26] = 0;
+  out[27] = 0;
+}
 
 /**
  * Renders a {@link Points3DLayer} as instanced, screen-facing billboards (see points3d-shader.ts):
@@ -23,9 +57,13 @@ export class Points3DVisual implements LayerVisual {
 
   private readonly module: GPUShaderModule;
   private readonly uniformBuffer: GPUBuffer;
-  private readonly scratch = new Float32Array(UNIFORM_FLOATS);
+  private readonly scratch = new Float32Array(POINTS3D_UNIFORM_FLOATS);
   private readonly instanceBuffer: GPUBuffer;
   private readonly styleBuffer: GPUBuffer;
+  /** N×RGBA when the layer has per-point colours, else one element read with stride 0. */
+  private colorBuffer: GPUBuffer;
+  private perPointColor: boolean;
+  private colorsVersion: number;
   private readonly lutTexture: GPUTexture;
   private readonly lutSampler: GPUSampler;
   private readonly count: number;
@@ -72,11 +110,51 @@ export class Points3DVisual implements LayerVisual {
     this.lutVersion = layer.colormapVersion;
     this.lutSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 
+    this.perPointColor = layer.colors !== null;
+    this.colorBuffer = this.createColorBuffer();
+    this.colorsVersion = layer.colorsVersion;
+
     this.currentBlend = layer.blending;
     this.dataVersion = layer.dataVersion;
     this.styleVersion = layer.styleVersion;
-    this.pipeline = this.buildPipeline(layer.blending);
+    this.pipeline = this.buildPipeline(layer.blending, this.perPointColor);
     this.bindGroup = this.buildBindGroup();
+  }
+
+  /**
+   * The colour buffer for the layer's current colours. Without per-point colours it is a single
+   * zeroed element the pipeline reads with stride 0, so a layer that never sets `colors` does not
+   * pay 16 bytes per point for a buffer the shader ignores.
+   */
+  private createColorBuffer(): GPUBuffer {
+    const colors = this.layer.colors;
+    const bytes = colors && colors.byteLength > 0 ? colors.byteLength : COLOR_STRIDE;
+    const buffer = this.device.createBuffer({
+      size: bytes,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    if (colors && colors.byteLength > 0) {
+      this.device.queue.writeBuffer(buffer, 0, colors as GPUAllowSharedBufferSource);
+    }
+    return buffer;
+  }
+
+  /** Re-upload the colours, reallocating only when per-point colour is switched on or off. */
+  private writeColors(): void {
+    const has = this.layer.colors !== null;
+    if (has !== this.perPointColor) {
+      this.colorBuffer.destroy();
+      this.perPointColor = has;
+      this.colorBuffer = this.createColorBuffer();
+      // The stride lives in the pipeline, so toggling per-point colour is a pipeline change.
+      this.pipeline = this.buildPipeline(this.currentBlend, has);
+      this.bindGroup = this.buildBindGroup();
+      return;
+    }
+    const colors = this.layer.colors;
+    if (colors && colors.byteLength > 0) {
+      this.device.queue.writeBuffer(this.colorBuffer, 0, colors as GPUAllowSharedBufferSource);
+    }
   }
 
   /** Re-upload the static half after the geometry or the scalars changed. */
@@ -93,7 +171,7 @@ export class Points3DVisual implements LayerVisual {
     this.device.queue.writeBuffer(this.styleBuffer, 0, style as GPUAllowSharedBufferSource);
   }
 
-  private buildPipeline(blend: BlendMode): GPURenderPipeline {
+  private buildPipeline(blend: BlendMode, perPointColor: boolean): GPURenderPipeline {
     return this.device.createRenderPipeline({
       layout: 'auto',
       vertex: {
@@ -115,6 +193,12 @@ export class Points3DVisual implements LayerVisual {
               { shaderLocation: 2, offset: 0, format: 'float32' }, // per-point alpha
               { shaderLocation: 3, offset: 4, format: 'float32' }, // per-point size scale
             ],
+          },
+          {
+            // Stride 0 without per-point colours: every instance reads the one dummy element.
+            arrayStride: perPointColor ? COLOR_STRIDE : 0,
+            stepMode: 'instance',
+            attributes: [{ shaderLocation: 4, offset: 0, format: 'float32x4' }], // per-point RGBA
           },
         ],
       },
@@ -152,7 +236,7 @@ export class Points3DVisual implements LayerVisual {
   sync(): void {
     if (this.layer.blending !== this.currentBlend) {
       this.currentBlend = this.layer.blending;
-      this.pipeline = this.buildPipeline(this.currentBlend);
+      this.pipeline = this.buildPipeline(this.currentBlend, this.perPointColor);
       this.bindGroup = this.buildBindGroup();
     }
     if (this.layer.colormapVersion !== this.lutVersion) {
@@ -170,33 +254,36 @@ export class Points3DVisual implements LayerVisual {
       this.styleVersion = this.layer.styleVersion;
       this.writeStyle();
     }
+    // Colours move the style clock too, but only a recolour re-uploads them.
+    if (this.layer.colorsVersion !== this.colorsVersion) {
+      this.colorsVersion = this.layer.colorsVersion;
+      this.writeColors();
+    }
   }
 
   draw(pass: GPURenderPassEncoder, view: RenderView): void {
     if (this.count === 0) return;
-    const s = this.scratch;
-    s.set(view.camera3d.viewProjection(view.vw, view.vh), 0);
-    s[16] = view.vw;
-    s[17] = view.vh;
-    s[18] = this.layer.size;
-    s[19] = this.layer.opacity;
-    const [lo, hi] = this.layer.contrastLimits;
-    s[20] = lo;
-    s[21] = hi;
-    s[22] = this.layer.gamma;
-    s[23] = 0;
-    this.device.queue.writeBuffer(this.uniformBuffer, 0, s);
+    packPoints3DUniforms(
+      this.scratch,
+      this.layer,
+      view.camera3d.viewProjection(view.vw, view.vh),
+      view.vw,
+      view.vh,
+    );
+    this.device.queue.writeBuffer(this.uniformBuffer, 0, this.scratch);
 
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this.bindGroup);
     pass.setVertexBuffer(0, this.instanceBuffer);
     pass.setVertexBuffer(1, this.styleBuffer);
+    pass.setVertexBuffer(2, this.colorBuffer);
     pass.draw(6, this.count);
   }
 
   dispose(): void {
     this.instanceBuffer.destroy();
     this.styleBuffer.destroy();
+    this.colorBuffer.destroy();
     this.lutTexture.destroy();
     this.uniformBuffer.destroy();
   }

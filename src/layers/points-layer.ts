@@ -5,15 +5,26 @@ export type RGBA = [number, number, number, number];
 
 /** Per-point or broadcast scalar/color inputs. */
 type SizeInput = number | number[] | Float32Array;
-type ColorInput = RGBA | RGBA[];
+
+/**
+ * A points colour: one RGBA (0..1) for every point, one RGBA per point, or a packed
+ * `Float32Array` of per-point RGBA (length 4N, `[r0, g0, b0, a0, r1, …]`).
+ *
+ * The packed form is what a host that computes colours in bulk already has. Without it, N
+ * colours have to be exploded into N four-element arrays only for the layer to flatten them
+ * back into its instance buffer — for half a million points, half a million short-lived arrays
+ * per recolour. The packed array is copied straight into the instance stride.
+ */
+export type PointColorInput = RGBA | RGBA[] | Float32Array;
+type ColorInput = PointColorInput;
 
 export interface PointsLayerOptions {
   name?: string;
   /** Marker diameter in data units (single value or per-point). */
   size?: SizeInput;
-  /** Fill color (single RGBA 0..1 or per-point). */
+  /** Fill color: single RGBA 0..1, per-point RGBA, or packed per-point RGBA (length 4N). */
   faceColor?: ColorInput;
-  /** Border color (single or per-point). */
+  /** Border color: single, per-point, or packed per-point RGBA (length 4N). */
   borderColor?: ColorInput;
   /** Border thickness in data units. */
   borderWidth?: number;
@@ -61,8 +72,8 @@ export class PointsLayer extends Layer {
     this.positions = normalizePositions(positions);
     this.count = this.positions.length / 2;
     this._size = opts.size ?? 10;
-    this._faceColor = opts.faceColor ?? [1, 1, 1, 1];
-    this._borderColor = opts.borderColor ?? [0, 0, 0, 1];
+    this._faceColor = checkColor(opts.faceColor ?? [1, 1, 1, 1], this.count, 'faceColor');
+    this._borderColor = checkColor(opts.borderColor ?? [0, 0, 0, 1], this.count, 'borderColor');
     this._borderWidth = opts.borderWidth ?? 0;
     this._symbol = opts.symbol ?? 'disc';
     if (opts.opacity !== undefined) this._opacity = opts.opacity;
@@ -83,7 +94,7 @@ export class PointsLayer extends Layer {
     return this._faceColor;
   }
   set faceColor(value: ColorInput) {
-    this._faceColor = value;
+    this._faceColor = checkColor(value, this.count, 'faceColor');
     this.dataVersion++;
     this.changed.emit(this);
   }
@@ -92,7 +103,7 @@ export class PointsLayer extends Layer {
     return this._borderColor;
   }
   set borderColor(value: ColorInput) {
-    this._borderColor = value;
+    this._borderColor = checkColor(value, this.count, 'borderColor');
     this.dataVersion++;
     this.changed.emit(this);
   }
@@ -140,7 +151,29 @@ export class PointsLayer extends Layer {
   }
 }
 
+/**
+ * Validate a packed colour array's length, so a mismatch surfaces at the assignment and not as
+ * a render. A short array would otherwise read past its end and colour the tail with NaN.
+ */
+function checkColor(color: ColorInput, n: number, what: string): ColorInput {
+  if (color instanceof Float32Array && color.length !== n * 4) {
+    throw new Error(
+      `Points ${what} length (${color.length}) must equal 4 × point count (${n * 4}).`,
+    );
+  }
+  return color;
+}
+
 function writeColor(out: Float32Array, offset: number, color: ColorInput, i: number): void {
+  if (color instanceof Float32Array) {
+    // Packed per-point RGBA: copy the four floats directly, no tuple in between.
+    const s = i * 4;
+    out[offset] = color[s];
+    out[offset + 1] = color[s + 1];
+    out[offset + 2] = color[s + 2];
+    out[offset + 3] = color[s + 3];
+    return;
+  }
   const c = Array.isArray(color[0]) ? (color as RGBA[])[i] : (color as RGBA);
   out[offset] = c[0];
   out[offset + 1] = c[1];

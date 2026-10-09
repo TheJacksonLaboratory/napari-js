@@ -1,6 +1,8 @@
 import { Layer, type BlendMode, type Fit3D } from './layer';
 import { Colormap, resolveColormap } from '../color/colormap';
+import { mapScalar, clamp01 } from '../color/display-pipeline';
 import type { SurfaceBounds } from './surface-layer';
+import type { RGBA } from './points-layer';
 
 export interface Points3DLayerOptions {
   /** Whether adding this layer frames the orbit camera; overrides the viewer's default. */
@@ -28,6 +30,16 @@ export interface Points3DLayerOptions {
   alphas?: Float32Array;
   /** Per-point size multiplier (length N) on top of `size`, for making a subset findable. */
   sizes?: Float32Array;
+  /**
+   * Per-point colour as packed RGBA 0..1 (length 4N, `[r0, g0, b0, a0, r1, …]`). When set it
+   * WINS over `values` + `colormap`: each point takes its own RGB, and the colormap, window and
+   * gamma no longer apply. Its alpha multiplies with `alphas` and the layer `opacity`.
+   *
+   * This is how categorical colour gets in. Encoding categories as scalars into a stepped LUT
+   * works, but caps the category count at what the LUT can resolve and puts the categories'
+   * order into the colour. See {@link Points3DLayer.colorAt} for the exact combination.
+   */
+  colors?: Float32Array;
 }
 
 /**
@@ -46,6 +58,9 @@ export const POINTS3D_DATA_FLOATS = 4;
 
 /** Mutable per-point style = [alpha, sizeScale] → 2 floats. */
 export const POINTS3D_STYLE_FLOATS = 2;
+
+/** Optional per-point colour = [r, g, b, a] → 4 floats, uploaded as is from `colors`. */
+export const POINTS3D_COLOR_FLOATS = 4;
 
 /**
  * A 3D scatter of point markers (napari Points-in-3D analog): `positions` (N×3, world/data coords,
@@ -83,8 +98,18 @@ export class Points3DLayer extends Layer {
    */
   styleVersion = 0;
 
+  /**
+   * Bumped, together with {@link styleVersion}, when {@link colors} is replaced.
+   *
+   * Per-point colours are styling, so they move the style clock — but they are twice the bytes
+   * of alpha + size, so they live in their own buffer, and this counter is how the visual tells
+   * a recolour from a selection click and re-uploads only the half that changed.
+   */
+  colorsVersion = 0;
+
   private _alphas: Float32Array | null;
   private _sizes: Float32Array | null;
+  private _colors: Float32Array | null;
 
   private _colormap: Colormap;
   private _contrastLimits: [number, number];
@@ -108,6 +133,7 @@ export class Points3DLayer extends Layer {
     this.count = n;
     this._alphas = checkLength(opts.alphas, n, 'alphas');
     this._sizes = checkLength(opts.sizes, n, 'sizes');
+    this._colors = checkColors(opts.colors, n);
     this._colormap = resolveColormap(opts.colormap ?? 'viridis');
     this._contrastLimits = opts.contrastLimits ?? valueRange(vals);
     this._contrastExplicit = opts.contrastLimits !== undefined;
@@ -142,6 +168,51 @@ export class Points3DLayer extends Layer {
     this._sizes = checkLength(value ?? undefined, this.count, 'sizes');
     this.styleVersion++;
     this.changed.emit(this);
+  }
+
+  /**
+   * Per-point packed RGBA (length 4N), or null to colour by `values` through the colormap.
+   *
+   * Replacing it moves only the style clock: the positions and values are not re-uploaded.
+   * The array is uploaded as is, so mutate a copy and assign it, not the array in place.
+   */
+  get colors(): Float32Array | null {
+    return this._colors;
+  }
+  set colors(value: Float32Array | null | undefined) {
+    this._colors = checkColors(value ?? undefined, this.count);
+    this.colorsVersion++;
+    this.styleVersion++;
+    this.changed.emit(this);
+  }
+
+  /**
+   * The straight (not premultiplied) RGBA point `i` is drawn with, before the layer `opacity`
+   * and the marker's antialiased edge — the CPU reference for the shader's colour choice, and
+   * what a host wants for a legend swatch or a tooltip.
+   *
+   *  - With {@link colors}: `rgb = colors[i].rgb`, `a = colors[i].a × alphas[i]`.
+   *    `values`, the colormap, the window and gamma do not apply.
+   *  - Without: `rgb = colormap(window → gamma (values[i]))`, `a = alphas[i]`.
+   *
+   * Alphas are clamped to 0..1, as the shader clamps them.
+   */
+  colorAt(i: number): RGBA {
+    const alpha = clamp01(this._alphas ? this._alphas[i] : 1);
+    const c = this._colors;
+    if (c) {
+      const o = i * 4;
+      return [c[o], c[o + 1], c[o + 2], clamp01(c[o + 3]) * alpha];
+    }
+    const [lo, hi] = this._contrastLimits;
+    const [r, g, b] = mapScalar(this._values[i], {
+      climLo: lo,
+      climHi: hi,
+      gamma: this._gamma,
+      invert: false,
+      colormap: this._colormap,
+    });
+    return [r, g, b, alpha];
   }
 
   /**
@@ -275,6 +346,17 @@ function checkLength(
     throw new Error(`Points3D ${what} length (${values.length}) must equal point count (${n}).`);
   }
   return values;
+}
+
+/** Validate a packed per-point RGBA array: four floats per point. */
+function checkColors(colors: Float32Array | undefined, n: number): Float32Array | null {
+  if (!colors) return null;
+  if (colors.length !== n * 4) {
+    throw new Error(
+      `Points3D colors length (${colors.length}) must equal 4 × point count (${n * 4}).`,
+    );
+  }
+  return colors;
 }
 
 /** Min/max of a value array, widened to a unit window when degenerate. */

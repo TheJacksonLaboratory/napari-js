@@ -12,6 +12,12 @@ All notable changes to napari-js are documented here. The format roughly follows
   re-uploads its whole buffer on the next frame; `move` only reorders `items`, emitting `moved`
   and `changed` but never `removed`/`added`, so the renderer keeps the visual it already has.
 
+- **Packed per-point colours.** `PointsLayer` `faceColor`/`borderColor` accept a `Float32Array` of
+  RGBA (length 4N), copied straight into the instance buffer instead of via N tuples.
+  `Points3DLayer` gains `colors` (option + setter, same packing): when set it wins over
+  `values` + `colormap`, its alpha multiplies `alphas`, and it moves only the style clock.
+  `Points3DLayer.colorAt(i)` is the CPU reference for that combination. Wrong lengths throw.
+
 ## [0.13.0]
 
 ### Added
