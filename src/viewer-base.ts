@@ -133,7 +133,9 @@ export abstract class ViewerBase {
 
   /**
    * Add a 3D volume layer (uint8 scalar field, x-fastest). Switches the viewer to 3D
-   * (`dims.ndisplay = 3`) and frames the orbit camera on the volume.
+   * (`dims.ndisplay = 3`) and frames the orbit camera on the volume's world box
+   * ({@link VolumeLayer.bounds}), the same framing {@link fitToLayers} and the other 3D
+   * adders use.
    */
   addVolume(
     data: Uint8Array,
@@ -144,12 +146,11 @@ export abstract class ViewerBase {
   ): VolumeLayer {
     const layer = new VolumeLayer(data, width, height, depth, opts);
     this.model.layers.add(layer);
-    if (this.shouldFit3D(opts.fit)) {
-      // Frame the camera on the WORLD box (dims × voxelSize), not the raw voxel counts, so an
-      // anisotropic/downsampled volume is framed at its true rendered size.
-      const [sx, sy, sz] = layer.voxelSize;
-      this.model.camera3d.frame(width * sx, height * sy, depth * sz);
-    }
+    // Framed like every other 3D adder: on the WORLD box (dims × voxelSize, so an anisotropic
+    // or downsampled volume is framed at its rendered size) through framingFor, which accounts
+    // for the field of view and the canvas aspect — not Camera3D.frame's fixed `max × 1.8`,
+    // which clips a portrait canvas.
+    if (this.shouldFit3D(opts.fit)) this.frameOn(layer.bounds());
     this.model.dims.ndisplay = 3;
     return layer;
   }

@@ -61,6 +61,13 @@ All notable changes to napari-js are documented here. The format roughly follows
   its point form, with no `getBoundingClientRect()` read. An SVG overlay sets one
   `matrix(...)` per camera change instead of a layout read per vertex.
 
+### Changed
+
+- **`addVolume` frames like the other 3D adders**: on `layer.bounds()` through `framingFor` (field
+  of view and canvas aspect), not `Camera3D.frame`'s `max(w, h, d) × 1.8`. Same target (the
+  origin); the distance now fits the box's half-diagonal, so the camera sits further back
+  (about 26% for a cube on a landscape canvas) and a portrait canvas no longer clips.
+
 ## [0.13.0]
 
 ### Added
