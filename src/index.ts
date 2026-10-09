@@ -14,6 +14,7 @@ export type { Histogram } from './color/histogram';
 // Model
 export { ViewerModel } from './scene/viewer-model';
 export { LayerList } from './scene/layer-list';
+export type { LayerMove } from './scene/layer-list';
 export { Dims } from './scene/dims';
 export { Camera } from './camera/camera';
 export { Camera3D } from './camera/camera3d';

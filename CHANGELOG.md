@@ -3,6 +3,15 @@
 All notable changes to napari-js are documented here. The format roughly follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`LayerList.move(layer, index)` and `LayerList.insert(index, layer)`** (napari's
+  `LayerList.move`/`insert`). Restacking by remove + re-add disposes the layer's GPU visual and
+  re-uploads its whole buffer on the next frame; `move` only reorders `items`, emitting `moved`
+  and `changed` but never `removed`/`added`, so the renderer keeps the visual it already has.
+
 ## [0.13.0]
 
 ### Added

@@ -43,3 +43,18 @@ describe('ViewerModel', () => {
     expect(n).toBe(afterRemove);
   });
 });
+
+describe('ViewerModel after a layer move', () => {
+  it('still forwards the moved layer’s changes, and the move itself', () => {
+    const m = new ViewerModel();
+    const a = m.layers.add(new PointsLayer([[0, 0]]));
+    m.layers.add(new PointsLayer([[1, 1]]));
+    let changed = 0;
+    m.changed.connect(() => changed++);
+    m.layers.move(a, 1);
+    expect(changed).toBe(1);
+    // The per-layer subscription survives: a move is not a remove, so nothing unhooked it.
+    a.opacity = 0.5;
+    expect(changed).toBe(2);
+  });
+});
