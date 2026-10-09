@@ -86,7 +86,7 @@ export {
 export type { RGB, ColorStop } from './color/colormap';
 export { buildLut, LUT_SIZE } from './color/lut';
 export { buildLabelLut } from './color/label-colormap';
-export { windowGamma, mapScalar, additiveComposite } from './color/display-pipeline';
+export { windowGamma, mapScalar, mapScalarRGBA, additiveComposite } from './color/display-pipeline';
 
 // High-level views
 export { MultiChannelImageView } from './views/multichannel-image-view';

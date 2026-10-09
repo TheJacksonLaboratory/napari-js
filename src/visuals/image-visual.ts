@@ -11,6 +11,31 @@ import { blendStateFor } from './blend';
 
 const UNIFORM_FLOATS = 28; // 112 bytes: mat4(16) + vec2+pad(4) + vec4(4) + vec4(4)
 const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
+/** Floats in the image shader's uniform block (shared with the tiled visual). */
+export const IMAGE_UNIFORM_FLOATS = UNIFORM_FLOATS;
+
+/**
+ * Pack the display half of the image uniforms — `params` and `flags`, floats 20..27 (layout
+ * in image-colormap-shader.ts). Shared by {@link ImageVisual} and the tiled visual so the two
+ * cannot disagree, and pure so it is testable without a device. `sampleScale` maps data
+ * units to the texture's sample units (1/255 for unorm8, 1 for float).
+ */
+export function packImageDisplayUniforms(
+  out: Float32Array,
+  layer: ImageLayer,
+  sampleScale: number,
+  isRgba: boolean,
+): void {
+  const [lo, hi] = layer.contrastLimits;
+  out[20] = lo * sampleScale;
+  out[21] = hi * sampleScale;
+  out[22] = layer.gamma;
+  out[23] = layer.opacity;
+  out[24] = isRgba ? 1 : 0;
+  out[25] = layer.invert ? 1 : 0;
+  out[26] = layer.transparentBelow ? 1 : 0;
+  out[27] = 0;
+}
 
 /** A {@link FormatPlan} plus the bytes to upload (null = external image via copyExternalImage). */
 type UploadPlan = FormatPlan & { data: Uint8Array | Uint16Array | Float32Array | null };
@@ -241,15 +266,7 @@ export class ImageVisual implements LayerVisual {
     s[17] = src.height;
     s[18] = 0;
     s[19] = 0;
-    const [lo, hi] = this.layer.contrastLimits;
-    s[20] = lo * this.plan.sampleScale;
-    s[21] = hi * this.plan.sampleScale;
-    s[22] = this.layer.gamma;
-    s[23] = this.layer.opacity;
-    s[24] = this.plan.isRgba ? 1 : 0;
-    s[25] = this.layer.invert ? 1 : 0;
-    s[26] = 0;
-    s[27] = 0;
+    packImageDisplayUniforms(s, this.layer, this.plan.sampleScale, this.plan.isRgba);
     this.device.queue.writeBuffer(this.uniformBuffer, 0, s);
 
     pass.setPipeline(this.pipeline);

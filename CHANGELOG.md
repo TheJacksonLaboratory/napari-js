@@ -43,6 +43,12 @@ All notable changes to napari-js are documented here. The format roughly follows
   `values` + `colormap`; null restores them. Uploaded per shape (a storage buffer), so a recolour
   re-expands nothing. `colorAt(i)` / `colorMode()` are the CPU reference.
 
+- **Alpha in colormaps, and `ImageLayer.transparentBelow`.** `ColorStop.color` may be RGBA
+  (alpha interpolated, `Colormap.sampleRGBA`, carried in the LUT); a scalar image multiplies it
+  into its alpha. `transparentBelow` (option + setter, a uniform) draws values ≤ the low contrast
+  limit fully transparent, so a density map recolours on a `contrastLimits` change without a
+  re-upload. `mapScalarRGBA` is the CPU reference. Other colormapped layers still use RGB only.
+
 ## [0.13.0]
 
 ### Added

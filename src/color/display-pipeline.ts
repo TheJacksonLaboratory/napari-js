@@ -37,6 +37,30 @@ export function mapScalar(
 }
 
 /**
+ * CPU reference for a scalar {@link ImageLayer} pixel, alpha included: window → invert →
+ * gamma → colormap, with the colormap's alpha ({@link Colormap.sampleRGBA}) and, under
+ * `transparentBelow`, alpha 0 for every value at or below `climLo` (before invert). Returns
+ * straight (not premultiplied) RGBA before the layer opacity. The image shader's scalar path.
+ */
+export function mapScalarRGBA(
+  value: number,
+  opts: {
+    climLo: number;
+    climHi: number;
+    gamma: number;
+    invert: boolean;
+    colormap: Colormap;
+    transparentBelow?: boolean;
+  },
+): [number, number, number, number] {
+  const c = opts.colormap.sampleRGBA(
+    windowGamma(value, opts.climLo, opts.climHi, opts.gamma, opts.invert),
+  );
+  if (opts.transparentBelow && value <= opts.climLo) c[3] = 0;
+  return c;
+}
+
+/**
  * Additive composite of premultiplied RGB contributions (channels with `blending: 'additive'`
  * over a black background), clamped to 1 — the CPU reference for multi-channel fluorescence.
  */

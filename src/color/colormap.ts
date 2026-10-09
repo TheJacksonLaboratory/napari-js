@@ -1,9 +1,14 @@
 export type RGB = [number, number, number];
 
-/** A control point in a colormap: normalized position `t` (0..1) → linear RGB (0..1). */
+/**
+ * A control point in a colormap: normalized position `t` (0..1) → linear RGB, or RGBA, in
+ * 0..1. A stop without alpha is opaque. Alpha is interpolated like the channels and carried
+ * in the LUT; {@link ImageLayer} honours it (a scalar pixel's alpha is the LUT's alpha ×
+ * opacity), the other colormapped layers use the RGB only.
+ */
 export interface ColorStop {
   t: number;
-  color: RGB;
+  color: RGB | [number, number, number, number];
 }
 
 /**
@@ -25,26 +30,42 @@ export class Colormap {
 
   /** Sample the colormap at `t` (clamped to 0..1), returning linear RGB. */
   sample(t: number): RGB {
+    const [r, g, b] = this.sampleRGBA(t);
+    return [r, g, b];
+  }
+
+  /**
+   * Sample the colormap at `t` (clamped to 0..1), returning linear RGB plus alpha, interpolated
+   * between the stops (a stop without alpha counts as 1). What {@link buildLut} stores.
+   */
+  sampleRGBA(t: number): [number, number, number, number] {
     const x = t <= 0 ? 0 : t >= 1 ? 1 : t;
     const { stops } = this;
-    if (x <= stops[0].t) return [...stops[0].color];
+    if (x <= stops[0].t) return rgba(stops[0].color);
     const last = stops[stops.length - 1];
-    if (x >= last.t) return [...last.color];
+    if (x >= last.t) return rgba(last.color);
     for (let i = 1; i < stops.length; i++) {
       const hi = stops[i];
       if (x <= hi.t) {
         const lo = stops[i - 1];
         const span = hi.t - lo.t || 1;
         const f = (x - lo.t) / span;
+        const a0 = lo.color[3] ?? 1;
+        const a1 = hi.color[3] ?? 1;
         return [
           lo.color[0] + (hi.color[0] - lo.color[0]) * f,
           lo.color[1] + (hi.color[1] - lo.color[1]) * f,
           lo.color[2] + (hi.color[2] - lo.color[2]) * f,
+          a0 + (a1 - a0) * f,
         ];
       }
     }
-    return [...last.color];
+    return rgba(last.color);
   }
+}
+
+function rgba(c: ColorStop['color']): [number, number, number, number] {
+  return [c[0], c[1], c[2], c[3] ?? 1];
 }
 
 function ramp(name: string, color: RGB): Colormap {
