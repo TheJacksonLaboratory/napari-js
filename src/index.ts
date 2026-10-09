@@ -26,7 +26,16 @@ export type { BlendMode, Fit3D } from './layers/layer';
 export { ImageLayer } from './layers/image-layer';
 export type { ImageLayerOptions, Interpolation } from './layers/image-layer';
 export { PointsLayer } from './layers/points-layer';
-export type { PointsLayerOptions, PointSymbol, RGBA, PointColorInput } from './layers/points-layer';
+export type { PointsLayerOptions, RGBA, PointColorInput } from './layers/points-layer';
+export {
+  POINT_SYMBOLS,
+  POINT_SYMBOL_ALIASES,
+  POINT_SYMBOL_LAYER_DEFAULT,
+  pointSymbolCode,
+  resolvePointSymbol,
+  pointSymbolDistance,
+} from './layers/point-symbols';
+export type { PointSymbol, PointSymbolAlias } from './layers/point-symbols';
 export { LabelsLayer } from './layers/labels-layer';
 export type { LabelsLayerOptions, LabelData } from './layers/labels-layer';
 export { VolumeLayer } from './layers/volume-layer';

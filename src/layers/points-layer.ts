@@ -1,6 +1,14 @@
 import { Layer, type BlendMode } from './layer';
+import {
+  checkPointSymbols,
+  pointSymbolCode,
+  resolvePointSymbol,
+  POINT_SYMBOL_LAYER_DEFAULT,
+  type PointSymbol,
+  type PointSymbolAlias,
+} from './point-symbols';
 
-export type PointSymbol = 'disc' | 'ring' | 'square';
+export type { PointSymbol, PointSymbolAlias } from './point-symbols';
 export type RGBA = [number, number, number, number];
 
 /** Per-point or broadcast scalar/color inputs. */
@@ -28,7 +36,18 @@ export interface PointsLayerOptions {
   borderColor?: ColorInput;
   /** Border thickness in data units. */
   borderWidth?: number;
-  symbol?: PointSymbol;
+  /**
+   * Marker shape for every point without a per-point code: a {@link PointSymbol} name or a
+   * napari alias (`'o'`, `'s'`, `'+'`, …). Default `'disc'`.
+   */
+  symbol?: PointSymbol | PointSymbolAlias;
+  /**
+   * Per-point marker shapes, napari's per-point `symbol`: one code per point, the code being
+   * the symbol's index in {@link POINT_SYMBOLS} (see {@link pointSymbolCode}). A code of
+   * {@link POINT_SYMBOL_LAYER_DEFAULT} (255) draws that point with the layer's `symbol`.
+   * Length must equal the point count; an unknown code throws.
+   */
+  symbols?: Uint8Array | null;
   opacity?: number;
   blending?: BlendMode;
   visible?: boolean;
@@ -36,7 +55,7 @@ export interface PointsLayerOptions {
   translate?: [number, number];
 }
 
-const STRIDE = 12; // x, y, size, fr,fg,fb,fa, br,bg,bb,ba, borderWidth
+const STRIDE = 12; // x, y, size, fr,fg,fb,fa, br,bg,bb,ba, symbol (code, or -1 = layer symbol)
 
 function normalizePositions(positions: Float32Array | number[][]): Float32Array {
   if (positions instanceof Float32Array) return positions;
@@ -51,9 +70,9 @@ function normalizePositions(positions: Float32Array | number[][]): Float32Array 
 /**
  * A scatter layer of point markers (the napari Points layer analog). Positions are `[x, y]`
  * pairs in data coordinates; size/colors may be uniform or per-point. Marker shape is one of
- * {@link PointSymbol}. Mutating display props emits `changed`; structural changes
- * (positions/size/colors) also bump {@link dataVersion} so the visual rebuilds its instance
- * buffer.
+ * {@link PointSymbol}, per layer or per point. Mutating display props emits `changed`;
+ * structural changes (positions/size/colors/per-point symbols) also bump {@link dataVersion}
+ * so the visual rebuilds its instance buffer.
  */
 export class PointsLayer extends Layer {
   readonly kind = 'points';
@@ -66,6 +85,7 @@ export class PointsLayer extends Layer {
   private _borderColor: ColorInput;
   private _borderWidth: number;
   private _symbol: PointSymbol;
+  private _symbols: Uint8Array | null;
 
   constructor(positions: Float32Array | number[][], opts: PointsLayerOptions = {}) {
     super({ name: opts.name, scale: opts.scale, translate: opts.translate });
@@ -75,7 +95,8 @@ export class PointsLayer extends Layer {
     this._faceColor = checkColor(opts.faceColor ?? [1, 1, 1, 1], this.count, 'faceColor');
     this._borderColor = checkColor(opts.borderColor ?? [0, 0, 0, 1], this.count, 'borderColor');
     this._borderWidth = opts.borderWidth ?? 0;
-    this._symbol = opts.symbol ?? 'disc';
+    this._symbol = resolvePointSymbol(opts.symbol ?? 'disc');
+    this._symbols = opts.symbols ? checkPointSymbols(opts.symbols, this.count) : null;
     if (opts.opacity !== undefined) this._opacity = opts.opacity;
     if (opts.blending !== undefined) this._blending = opts.blending;
     if (opts.visible !== undefined) this._visible = opts.visible;
@@ -108,25 +129,46 @@ export class PointsLayer extends Layer {
     this.changed.emit(this);
   }
 
+  /** Border thickness in data units. A uniform: changing it does not rebuild the instances. */
   get borderWidth(): number {
     return this._borderWidth;
   }
   set borderWidth(value: number) {
     this._borderWidth = value;
+    this.changed.emit(this);
+  }
+
+  /** The layer's marker shape — every point's, unless {@link symbols} overrides it. */
+  get symbol(): PointSymbol {
+    return this._symbol;
+  }
+  set symbol(value: PointSymbol | PointSymbolAlias) {
+    this._symbol = resolvePointSymbol(value);
+    this.changed.emit(this);
+  }
+
+  /**
+   * Per-point symbol codes (see {@link PointsLayerOptions.symbols}), or null when every point
+   * uses {@link symbol}. Kept by reference; reassign (not mutate) it to redraw.
+   */
+  get symbols(): Uint8Array | null {
+    return this._symbols;
+  }
+  set symbols(value: Uint8Array | null) {
+    this._symbols = value ? checkPointSymbols(value, this.count) : null;
     this.dataVersion++;
     this.changed.emit(this);
   }
 
-  get symbol(): PointSymbol {
-    return this._symbol;
-  }
-  set symbol(value: PointSymbol) {
-    this._symbol = value;
-    this.changed.emit(this);
+  /** The layer symbol's code: its index in {@link POINT_SYMBOLS} (disc 0, ring 1, square 2, …). */
+  symbolCode(): number {
+    return pointSymbolCode(this._symbol);
   }
 
-  symbolCode(): number {
-    return this._symbol === 'disc' ? 0 : this._symbol === 'ring' ? 1 : 2;
+  /** The symbol code point `i` is drawn with: its per-point code, else the layer's. */
+  symbolCodeAt(i: number): number {
+    const c = this._symbols ? this._symbols[i] : POINT_SYMBOL_LAYER_DEFAULT;
+    return c === POINT_SYMBOL_LAYER_DEFAULT ? this.symbolCode() : c;
   }
 
   /** Per-point size at index `i`. */
@@ -135,9 +177,15 @@ export class PointsLayer extends Layer {
     return typeof s === 'number' ? s : s[i];
   }
 
-  /** Build the interleaved instance buffer (count × 12 floats) for the GPU. */
+  /**
+   * Build the interleaved instance buffer (count × 12 floats) for the GPU:
+   * `x, y, size, face rgba, border rgba, symbol`. The symbol slot holds the per-point code,
+   * or -1 for "the layer symbol" — so the layer `symbol` stays a uniform and changing it does
+   * not rebuild the buffer.
+   */
   buildInstanceData() {
     const out = new Float32Array(this.count * STRIDE);
+    const symbols = this._symbols;
     for (let i = 0; i < this.count; i++) {
       const o = i * STRIDE;
       out[o] = this.positions[i * 2];
@@ -145,7 +193,8 @@ export class PointsLayer extends Layer {
       out[o + 2] = this.sizeAt(i);
       writeColor(out, o + 3, this._faceColor, i);
       writeColor(out, o + 7, this._borderColor, i);
-      out[o + 11] = this._borderWidth;
+      const code = symbols ? symbols[i] : POINT_SYMBOL_LAYER_DEFAULT;
+      out[o + 11] = code === POINT_SYMBOL_LAYER_DEFAULT ? -1 : code;
     }
     return out;
   }

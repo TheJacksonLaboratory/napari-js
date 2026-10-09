@@ -32,6 +32,12 @@ All notable changes to napari-js are documented here. The format roughly follows
   a blank frame. Replaces hand-written stubs that drift from the library. `Viewer`'s GPU-free half
   moved into a shared `ViewerBase`, so the two cannot diverge; the main bundle is still one file.
 
+- **Per-point marker symbols.** `PointSymbol` grows to napari's set (`diamond`, `star`, `cross`,
+  `x`, `triangle_up`/`_down`, `arrow`, `tailed_arrow`, `hbar`, `vbar`, `clobber`) plus `hexagon` and
+  `pentagon`; napari aliases (`'o'`, `'+'`, `'^'`, …) resolve. `PointsLayer.symbols` takes one code
+  per point (`Uint8Array`, `pointSymbolCode(name)`; 255 = the layer `symbol`), drawn as SDFs with
+  the existing border. `pointSymbolDistance` is the CPU reference. `borderWidth` is now a uniform.
+
 ## [0.13.0]
 
 ### Added
