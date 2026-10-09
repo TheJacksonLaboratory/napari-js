@@ -26,7 +26,12 @@ export type { BlendMode, Fit3D } from './layers/layer';
 export { ImageLayer } from './layers/image-layer';
 export type { ImageLayerOptions, Interpolation } from './layers/image-layer';
 export { PointsLayer } from './layers/points-layer';
-export type { PointsLayerOptions, RGBA, PointColorInput } from './layers/points-layer';
+export type {
+  PointsLayerOptions,
+  PointsPickOptions,
+  RGBA,
+  PointColorInput,
+} from './layers/points-layer';
 export {
   POINT_SYMBOLS,
   POINT_SYMBOL_ALIASES,
@@ -62,6 +67,10 @@ export { nearestPointIndex, nearestProjectedIndex } from './picking/pick';
 export type { ProjectedPickOptions } from './picking/pick';
 export { ScreenIndex, pickLinear, SCREEN_INDEX_MIN_POINTS } from './picking/screen-index';
 export type { ScreenIndexOptions } from './picking/screen-index';
+export { GridIndex } from './picking/grid-index';
+export type { GridBounds, GridIndexOptions } from './picking/grid-index';
+export { PointPicker } from './picking/point-picker';
+export type { PointPickerHost, PointPickerOptions } from './picking/point-picker';
 export { projectPoint, projectPoints } from './picking/project';
 export type { ProjectedPoint, ProjectedPoints } from './picking/project';
 export { unionBounds, resolveFit, framingFor, Fit3DState } from './scene/fit';

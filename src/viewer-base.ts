@@ -223,6 +223,17 @@ export abstract class ViewerBase {
     ];
   }
 
+  /**
+   * The canvas size in CSS pixels — the units pointer events and {@link projectPoints}
+   * use. `[0, 0]` before the canvas is laid out.
+   */
+  viewportSize(): [number, number] {
+    return [
+      this.canvas.clientWidth || this.canvas.width,
+      this.canvas.clientHeight || this.canvas.height,
+    ];
+  }
+
   /** The data/world rectangle currently visible (2D), in data coordinates. A host can clamp
    *  this to the image bounds to obtain the displayed source rect. */
   visibleWorldRect(): Rect {
@@ -272,8 +283,7 @@ export abstract class ViewerBase {
    * ends up offset on a retina display. Null before the canvas has a size.
    */
   projectPoints(positions: Float32Array, out?: Partial<ProjectedPoints>): ProjectedPoints | null {
-    const vw = this.canvas.clientWidth || this.canvas.width;
-    const vh = this.canvas.clientHeight || this.canvas.height;
+    const [vw, vh] = this.viewportSize();
     if (!vw || !vh) return null;
     return projectPoints(this.model.camera3d.viewProjection(vw, vh), positions, vw, vh, out);
   }

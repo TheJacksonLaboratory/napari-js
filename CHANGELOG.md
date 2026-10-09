@@ -49,6 +49,13 @@ All notable changes to napari-js are documented here. The format roughly follows
   limit fully transparent, so a density map recolours on a `contrastLimits` change without a
   re-upload. `mapScalarRGBA` is the CPU reference. Other colormapped layers still use RGB only.
 
+- **Picking.** `GridIndex`, a bucket grid over any 2D coordinate set (`ScreenIndex` now builds on
+  it). `PointsLayer.pick(worldX, worldY, { tolerance, radiusAt, pickable, tieBreak })` — napari's
+  `get_value`: `'topmost'` (default, last drawn) or `'nearest'`, over a lazily built index rebuilt
+  on `dataVersion`. `PointPicker(viewer, points3d, { maxReach })` owns the 3D policy: lazy
+  re-projection on camera / data / resize into reused buffers, the screen index, layer-style
+  radii and muting. `Viewer.viewportSize()` gives the canvas size in CSS px.
+
 ## [0.13.0]
 
 ### Added

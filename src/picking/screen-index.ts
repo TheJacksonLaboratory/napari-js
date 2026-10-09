@@ -1,5 +1,6 @@
 import { nearestProjectedIndex, type ProjectedPickOptions } from './pick';
 import type { ProjectedPoints } from './project';
+import { GridIndex } from './grid-index';
 
 /**
  * A uniform grid over the canvas, so picking does not scan the whole cloud.
@@ -20,9 +21,8 @@ import type { ProjectedPoints } from './project';
  * happens once when the drag stops and the pointer next moves, and every pick after that is
  * essentially free.
  *
- * Counting sort into a flat CSR-style pair of arrays rather than an array of arrays: at
- * these sizes a few million small arrays is its own performance problem, and two typed
- * arrays are one allocation each.
+ * The bucketing itself is the generic {@link GridIndex}; this adds the canvas margin and
+ * the depth-aware pick.
  */
 
 /** Smallest cell edge in pixels. Below this the grid costs more in cells than it saves. */
@@ -63,16 +63,8 @@ export class ScreenIndex {
   /** Margin in pixels by which the grid overhangs the canvas on every side. */
   readonly margin: number;
 
-  /** Grid origin in screen coordinates — `-margin`, so cell 0 starts outside the canvas. */
-  private readonly originX: number;
-
-  private readonly originY: number;
-
-  /** Start of each cell's slice in {@link items}; length `cols*rows + 1`. */
-  private readonly starts: Int32Array;
-
-  /** Point indices, grouped by cell. */
-  private readonly items: Int32Array;
+  /** The bucket grid, over the canvas plus the margin. */
+  private readonly grid: GridIndex;
 
   private readonly screen: Float32Array;
 
@@ -88,65 +80,33 @@ export class ScreenIndex {
    * bug on that edge, while `ceil(800/32)` is exact and exposed it. An index that is
    * accidentally correct on two edges out of four is the harder kind of wrong.
    *
-   * So the origin starts at `-margin` and the grid covers the canvas plus the margin on both
-   * sides. The column count is `floor(span / cell) + 1`, not `ceil(span / cell)`, and that
-   * `+ 1` is doing real work rather than being defensive: with `ceil`, a span that divides
-   * evenly by the cell leaves the EXACT upper endpoint one column past the end of the grid,
-   * so `x = width + maxReach` was dropped while `x = -maxReach` was kept. An asymmetry
-   * between the two ends of the same margin, and — like the edge bug above — visible only
-   * when the arithmetic happened to come out even.
+   * So the grid covers `[-margin, size + margin]` on both axes, inclusive at both ends —
+   * {@link GridIndex} sizes it `floor(span / cell) + 1` cells, so the exact upper endpoint
+   * of the margin is kept just as the lower one is.
    */
   constructor(projected: ProjectedPoints, vw: number, vh: number, opts: ScreenIndexOptions = {}) {
     this.screen = projected.screen;
     this.depth = projected.depth ?? null;
     this.cell = Math.max(MIN_CELL, opts.cell ?? 32);
     this.margin = Math.max(0, opts.maxReach ?? DEFAULT_MAX_REACH);
-    this.originX = -this.margin;
-    this.originY = -this.margin;
-    // `floor + 1`, so the inclusive upper endpoint of the margin has a cell of its own.
-    this.cols = Math.floor((vw + 2 * this.margin) / this.cell) + 1;
-    this.rows = Math.floor((vh + 2 * this.margin) / this.cell) + 1;
-
-    const n = this.screen.length >> 1;
-    const cellCount = this.cols * this.rows;
-    const counts = new Int32Array(cellCount + 1);
-
-    // Pass 1: count. Points beyond the margin, and NaN ones, are not indexed — no marker
-    // reaches the cursor from there, so leaving them out shrinks the grid.
-    const cellOf = new Int32Array(n).fill(-1);
-    for (let i = 0; i < n; i++) {
-      const c = this.cellIndex(this.screen[i * 2], this.screen[i * 2 + 1]);
-      if (c < 0) continue;
-      cellOf[i] = c;
-      counts[c + 1]++;
-    }
-    for (let c = 0; c < cellCount; c++) counts[c + 1] += counts[c];
-    this.starts = counts;
-
-    // Pass 2: place. `cursor` walks a copy so `starts` keeps the slice boundaries.
-    const cursor = Int32Array.from(counts.subarray(0, cellCount));
-    this.items = new Int32Array(counts[cellCount]);
-    for (let i = 0; i < n; i++) {
-      const c = cellOf[i];
-      if (c < 0) continue;
-      this.items[cursor[c]++] = i;
-    }
+    // Points beyond the margin, and NaN ones, are not indexed — no marker reaches the
+    // cursor from there, so leaving them out shrinks the grid.
+    this.grid = new GridIndex(this.screen, {
+      cell: this.cell,
+      bounds: {
+        minX: -this.margin,
+        minY: -this.margin,
+        maxX: vw + this.margin,
+        maxY: vh + this.margin,
+      },
+    });
+    this.cols = this.grid.cols;
+    this.rows = this.grid.rows;
   }
 
   /** How many points the grid actually holds — the rest were off screen or NaN. */
   get indexed(): number {
-    return this.items.length;
-  }
-
-  private cellIndex(x: number, y: number): number {
-    const gx = x - this.originX;
-    const gy = y - this.originY;
-    // NaN fails both comparisons, so an unprojected point is excluded here.
-    if (!(gx >= 0) || !(gy >= 0)) return -1;
-    const cx = Math.floor(gx / this.cell);
-    const cy = Math.floor(gy / this.cell);
-    if (cx >= this.cols || cy >= this.rows) return -1;
-    return cy * this.cols + cx;
+    return this.grid.indexed;
   }
 
   /**
@@ -159,50 +119,37 @@ export class ScreenIndex {
    */
   pick(x: number, y: number, radius: number, opts: ProjectedPickOptions = {}): number {
     const { radiusAt, pickable } = opts;
-    // Same origin shift as the build, or the query would read the wrong cells.
-    const gx = x - this.originX;
-    const gy = y - this.originY;
-    const minCx = Math.max(0, Math.floor((gx - radius) / this.cell));
-    const maxCx = Math.min(this.cols - 1, Math.floor((gx + radius) / this.cell));
-    const minCy = Math.max(0, Math.floor((gy - radius) / this.cell));
-    const maxCy = Math.min(this.rows - 1, Math.floor((gy + radius) / this.cell));
+    const { screen, depth } = this;
     const r2 = radius * radius;
-
     let best = -1;
     let bestDepth = Infinity;
     let bestD2 = Infinity;
-    for (let cy = minCy; cy <= maxCy; cy++) {
-      for (let cx = minCx; cx <= maxCx; cx++) {
-        const c = cy * this.cols + cx;
-        for (let s = this.starts[c]; s < this.starts[c + 1]; s++) {
-          const i = this.items[s];
-          const dx = this.screen[i * 2] - x;
-          const dy = this.screen[i * 2 + 1] - y;
-          const d2 = dx * dx + dy * dy;
-          if (radiusAt) {
-            const r = radiusAt(i);
-            if (!(d2 <= r * r)) continue;
-          } else if (!(d2 <= r2)) continue;
-          if (pickable && !pickable(i)) continue;
-          if (!this.depth) {
-            if (d2 < bestD2) {
-              bestD2 = d2;
-              best = i;
-            }
-            continue;
-          }
-          const z = this.depth[i];
-          if (z < bestDepth) {
-            bestDepth = z;
-            bestD2 = d2;
-            best = i;
-          } else if (z === bestDepth && d2 < bestD2) {
-            bestD2 = d2;
-            best = i;
-          }
+    this.grid.forEachCandidate(x, y, radius, (i) => {
+      const dx = screen[i * 2] - x;
+      const dy = screen[i * 2 + 1] - y;
+      const d2 = dx * dx + dy * dy;
+      if (radiusAt) {
+        const r = radiusAt(i);
+        if (!(d2 <= r * r)) return;
+      } else if (!(d2 <= r2)) return;
+      if (pickable && !pickable(i)) return;
+      if (!depth) {
+        if (d2 < bestD2) {
+          bestD2 = d2;
+          best = i;
         }
+        return;
       }
-    }
+      const z = depth[i];
+      if (z < bestDepth) {
+        bestDepth = z;
+        bestD2 = d2;
+        best = i;
+      } else if (z === bestDepth && d2 < bestD2) {
+        bestD2 = d2;
+        best = i;
+      }
+    });
     return best;
   }
 }

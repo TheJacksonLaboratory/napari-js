@@ -7,6 +7,7 @@ import {
   type PointSymbol,
   type PointSymbolAlias,
 } from './point-symbols';
+import { GridIndex } from '../picking/grid-index';
 
 export type { PointSymbol, PointSymbolAlias } from './point-symbols';
 export type RGBA = [number, number, number, number];
@@ -55,6 +56,35 @@ export interface PointsLayerOptions {
   translate?: [number, number];
 }
 
+/** Options for {@link PointsLayer.pick}. Distances and radii are in WORLD units. */
+export interface PointsPickOptions {
+  /**
+   * Slack around every marker: a point is hit when the query is within
+   * `max(its radius, tolerance)` of its centre — so a tiny marker can still be hovered.
+   * Default 0 (the drawn marker only).
+   */
+  tolerance?: number;
+  /**
+   * Hit radius for point `i`, overriding the drawn one (`sizeAt(i) / 2`, in world units) —
+   * e.g. a host that draws a selected marker larger. Still floored at `tolerance`.
+   */
+  radiusAt?: (i: number) => number;
+  /**
+   * The largest radius `radiusAt` returns. It bounds which grid cells are searched, so a
+   * larger radius is missed. Default: the largest drawn marker radius.
+   */
+  maxRadius?: number;
+  /** False for a point the host does not draw or does not want picked. */
+  pickable?: (i: number) => boolean;
+  /**
+   * Which of several hit points wins:
+   *  - `'topmost'` (default, napari's `get_value`): the last drawn — highest index — whatever
+   *    its distance, because that is the marker on top, the one the user sees.
+   *  - `'nearest'`: the centre nearest the query; an exact tie goes to the later (topmost).
+   */
+  tieBreak?: 'topmost' | 'nearest';
+}
+
 const STRIDE = 12; // x, y, size, fr,fg,fb,fa, br,bg,bb,ba, symbol (code, or -1 = layer symbol)
 
 function normalizePositions(positions: Float32Array | number[][]): Float32Array {
@@ -86,6 +116,13 @@ export class PointsLayer extends Layer {
   private _borderWidth: number;
   private _symbol: PointSymbol;
   private _symbols: Uint8Array | null;
+  /** Lazily built pick index, and what it was built from. */
+  private _pickIndex: {
+    grid: GridIndex;
+    positions: Float32Array;
+    dataVersion: number;
+    maxSize: number;
+  } | null = null;
 
   constructor(positions: Float32Array | number[][], opts: PointsLayerOptions = {}) {
     super({ name: opts.name, scale: opts.scale, translate: opts.translate });
@@ -175,6 +212,67 @@ export class PointsLayer extends Layer {
   sizeAt(i: number): number {
     const s = this._size;
     return typeof s === 'number' ? s : s[i];
+  }
+
+  /**
+   * Index of the point under world coordinates `(worldX, worldY)`, or -1 — napari's
+   * `layer.get_value(position)` for points, and what a hover or click handler wants.
+   *
+   * A point is hit when the query lies within `max(radius, tolerance)` of its centre, the
+   * radius being the drawn marker's (`sizeAt(i) / 2`, a disc whatever the symbol) or
+   * `radiusAt(i)`. {@link PointsPickOptions.tieBreak} decides between several hits.
+   *
+   * Backed by a {@link GridIndex} over the data positions, built on the first pick and
+   * rebuilt only after {@link dataVersion} moves or `positions` is replaced — so a pointer
+   * move costs a few cells, not a scan. Query and radii are taken through the layer's
+   * `scale`/`translate`; with an anisotropic scale distances use the geometric-mean scale.
+   */
+  pick(worldX: number, worldY: number, opts: PointsPickOptions = {}): number {
+    const { tolerance = 0, radiusAt, pickable, tieBreak = 'topmost' } = opts;
+    const [sx, sy] = this.scale;
+    const [tx, ty] = this.translate;
+    const k = Math.sqrt(Math.abs(sx * sy)) || 1; // world units per data unit
+    const qx = (worldX - tx) / sx;
+    const qy = (worldY - ty) / sy;
+    const index = this.pickIndex();
+    const maxRadius = opts.maxRadius ?? (index.maxSize / 2) * k;
+    const reach = Math.max(tolerance, maxRadius) / k; // in data units
+    const pos = this.positions;
+    const topmost = tieBreak === 'topmost';
+    let best = -1;
+    let bestD2 = Infinity;
+    index.grid.forEachCandidate(qx, qy, reach, (i) => {
+      const dx = (pos[i * 2] - qx) * k;
+      const dy = (pos[i * 2 + 1] - qy) * k;
+      const d2 = dx * dx + dy * dy;
+      const r = Math.max(radiusAt ? radiusAt(i) : (this.sizeAt(i) / 2) * k, tolerance);
+      if (!(d2 <= r * r)) return;
+      if (pickable && !pickable(i)) return;
+      // Candidates do not arrive in index order, so both rules compare indices explicitly.
+      if (topmost ? i > best : d2 < bestD2 || (d2 === bestD2 && i > best)) {
+        best = i;
+        bestD2 = d2;
+      }
+    });
+    return best;
+  }
+
+  private pickIndex(): { grid: GridIndex; maxSize: number } {
+    const cached = this._pickIndex;
+    if (cached && cached.positions === this.positions && cached.dataVersion === this.dataVersion) {
+      return cached;
+    }
+    let maxSize = 0;
+    for (let i = 0; i < this.count; i++) {
+      const sz = this.sizeAt(i);
+      if (sz > maxSize) maxSize = sz;
+    }
+    // Cells at least one marker wide, so a typical query visits a 2×2 block.
+    const bounds = GridIndex.boundsOf(this.positions);
+    const cell = Math.max(GridIndex.suggestCell(bounds, this.count), maxSize);
+    const grid = new GridIndex(this.positions, { cell, bounds });
+    this._pickIndex = { grid, positions: this.positions, dataVersion: this.dataVersion, maxSize };
+    return this._pickIndex;
   }
 
   /**
