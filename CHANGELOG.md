@@ -65,6 +65,12 @@ All notable changes to napari-js are documented here. The format roughly follows
   the view's centre first (ties row-major) so a streaming consumer fills the middle of the screen
   first; `limit` keeps the first N after ordering. Without options the list is unchanged.
 
+- **Whole-level reads from a `TiledSource`**: `readLevel(source, z, opts)` picks the finest level
+  within `maxTiles`/`maxTextureDim` (`chooseStitchLevel`, on `selectLevel`/`tileGrid`), stitches it
+  with bounded concurrency and box-downscales to `maxSide`; `assembleVolume` stacks z-slices into a
+  uint8 volume with progress; `bitmapToScalar`/`rgbaToScalar` decode images. All cancel via
+  `AbortSignal`, which is also passed to `fetchTile(key, signal?)`.
+
 ### Changed
 
 - **`addVolume` frames like the other 3D adders**: on `layer.bounds()` through `framingFor` (field

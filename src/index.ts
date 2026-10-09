@@ -144,6 +144,33 @@ export {
   worldViewport,
 } from './io/pyramid';
 export type { Rect, VisibleTile, VisibleTilesOptions } from './io/pyramid';
+
+// Whole-level / volume reads from a tiled source
+export {
+  readLevel,
+  chooseStitchLevel,
+  downscaleImage,
+  DEFAULT_MAX_TEXTURE_DIM,
+  DEFAULT_TILE_CONCURRENCY,
+} from './io/stitch';
+export type {
+  ReadLevelOptions,
+  StitchBudget,
+  StitchLevelChoice,
+  StitchedImage,
+  PyramidGeometry,
+} from './io/stitch';
+export { assembleVolume, DEFAULT_SLICE_CONCURRENCY, DEFAULT_MAX_STITCH_TILES } from './io/volume';
+export type { AssembleVolumeOptions, AssembledVolume } from './io/volume';
+export { bitmapToScalar, rgbaToScalar, decodeImageRGBA, fitWithin } from './io/decode';
+export type {
+  ScalarWeights,
+  ScalarPlane,
+  RgbaPixels,
+  DrawableImage,
+  BitmapToScalarOptions,
+} from './io/decode';
+
 export { LruCache } from './cache/lru';
 
 export { VERSION } from './version';
