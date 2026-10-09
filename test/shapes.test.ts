@@ -9,6 +9,7 @@ import {
 import { packShapesUniforms, SHAPES_UNIFORM_FLOATS } from '../src/visuals/shapes-visual';
 import { SHAPES_SHADER } from '../src/visuals/shapes-shader';
 import { identity } from '../src/math/mat4';
+import { WINDOW_EPSILON } from '../src/color/display-pipeline';
 
 // Two shapes, as flat rings: a 2×2 square then a triangle.
 const SQUARE = [0, 0, 2, 0, 2, 2, 0, 2]; // vertices 0..3
@@ -417,5 +418,11 @@ describe('shapes uniforms and shader contract', () => {
     expect(SHAPES_SHADER).toContain('faceColors[u32(round(in.value))]');
     expect(SHAPES_SHADER).toMatch(/if \(u\.color\.w > 1\.5\)/);
     expect(SHAPES_SHADER).toContain('let a = alpha * opacity;');
+  });
+});
+
+describe('ShapesLayer window epsilon', () => {
+  it('the shader floors the window width with windowGamma’s epsilon, like colorAt()', () => {
+    expect(SHAPES_SHADER).toContain(`max(hi - lo, ${WINDOW_EPSILON})`);
   });
 });

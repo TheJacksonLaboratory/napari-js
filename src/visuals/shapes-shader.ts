@@ -1,3 +1,5 @@
+import { WINDOW_EPSILON } from '../color/display-pipeline';
+
 // Polygon rings drawn as a line-list (boundaries) or a triangle-list (interiors).
 // One vertex = a data-space position plus the scalar of the shape it belongs to; the
 // scalar is windowed, gamma-corrected and looked up in the same 256-entry LUT the
@@ -50,7 +52,8 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
   } else {
     let lo = u.window.x;
     let hi = u.window.y;
-    let t = clamp((in.value - lo) / max(hi - lo, 1e-6), 0.0, 1.0);
+    // windowGamma()'s epsilon, so ShapesLayer.colorAt() matches a very narrow window too.
+    let t = clamp((in.value - lo) / max(hi - lo, ${WINDOW_EPSILON}), 0.0, 1.0);
     let g = pow(t, u.window.z);
     rgb = textureSampleLevel(lut, lutSampler, vec2<f32>(g, 0.5), 0.0).rgb;
   }
