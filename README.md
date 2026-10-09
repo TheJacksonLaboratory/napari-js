@@ -91,6 +91,20 @@ it: Jest `moduleNameMapper: { '^napari-js$': '<rootDir>/node_modules/napari-js/d
 (and let Jest transform `napari-js`, which is ESM), or a Vitest `resolve.alias`. Layers it builds
 are instances of the same classes `napari-js` exports.
 
+### Overlays: `napari-js/overlays`
+
+DOM chrome over the canvas, as napari's viewer overlays: a physical scale bar (2D zoom, or the 3D
+camera at its target's depth), crisp 3D axis labels, and an OpenSeadragon-style 2D navigator. Each
+takes `(host, viewer, opts)` and has `dispose()`; the main bundle does not include them.
+
+```ts
+import { ScaleBarOverlay, NavigatorOverlay, scaleBarFor } from 'napari-js/overlays';
+
+const bar = new ScaleBarOverlay(host, viewer, { unitPerWorld: 0.25, unit: 'µm' });
+const nav = new NavigatorOverlay(host, viewer, { worldWidth: w, worldHeight: h, image: thumb });
+scaleBarFor(pxPerWorld, umPerWorld, 120); // the pure maths, for a bar drawn elsewhere
+```
+
 ## Develop
 
 ```bash

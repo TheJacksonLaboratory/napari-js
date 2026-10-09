@@ -78,6 +78,12 @@ All notable changes to napari-js are documented here. The format roughly follows
   origin); the distance now fits the box's half-diagonal, so the camera sits further back
   (about 26% for a cube on a landscape canvas) and a portrait canvas no longer clips.
 
+- **`napari-js/overlays`**: `ScaleBarOverlay` (2D zoom or the 3D camera's `worldPerPixel`),
+  `AxesLabelsOverlay` (projected 3D axis text) and `NavigatorOverlay` (minimap on
+  `visibleWorldRect`), each `(host, viewer, opts)` with `dispose()`. The pure `scaleBarFor` snaps
+  to the nearest 1/2/5 × 10ⁿ and `formatLength` picks the unit. A second entry, like `testing`.
+
+
 ## [0.13.0]
 
 ### Added
