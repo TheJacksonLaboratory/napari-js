@@ -50,3 +50,51 @@ export function histogramScalar(
   }
   return { counts, bins, min, max };
 }
+
+/** Options for {@link autoContrastLimits}. */
+export interface AutoContrastOptions {
+  /**
+   * Ignore a first or last bin that is larger than its neighbour (unscanned padding, a clipped
+   * background) so it does not pull the window. Default true.
+   */
+  dropDominantEnds?: boolean;
+}
+
+/**
+ * Saturation-based auto contrast: the `[lo, hi]` window that clips about `saturation` (a
+ * fraction, clamped to 0..0.5) of the counted pixels at EACH end of the histogram. `lo` is the
+ * lower edge of the first bin the cumulative count passes the cut in, `hi` the upper edge of the
+ * last, so whole bins are kept. Falls back to the histogram's `[min, max]` when it is empty.
+ * Pure.
+ */
+export function autoContrastLimits(
+  histogram: Histogram,
+  saturation: number,
+  opts: AutoContrastOptions = {},
+): [number, number] {
+  const { min, max } = histogram;
+  const counts = Array.from(histogram.counts);
+  const n = counts.length;
+  if (n === 0) return [min, max];
+  if (opts.dropDominantEnds ?? true) {
+    if (n > 2 && counts[0] > counts[1]) counts[0] = 0;
+    if (n > 2 && counts[n - 1] > counts[n - 2]) counts[n - 1] = 0;
+  }
+  let total = 0;
+  for (const c of counts) total += c;
+  if (total <= 0) return [min, max];
+  const cut = total * Math.max(0, Math.min(0.5, saturation));
+  const width = (max - min) / n;
+  let lo = 0;
+  for (let acc = 0; lo < n - 1; lo++) {
+    acc += counts[lo];
+    if (acc > cut) break;
+  }
+  let hi = n - 1;
+  for (let acc = 0; hi > 0; hi--) {
+    acc += counts[hi];
+    if (acc > cut) break;
+  }
+  if (hi < lo) hi = lo;
+  return [min + lo * width, min + (hi + 1) * width];
+}

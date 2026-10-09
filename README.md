@@ -118,6 +118,22 @@ viewer.addImage(img, { colormap: lutColormap('turbo', TURBO_LUT) });
 matplotlibColormap('RdBu'); // by name, via the COLORMAP_LUTS registry (keeps every map)
 ```
 
+### Geometry: `napari-js/geometry`
+
+Framework-free raster/vector geometry, the operations behind napari's Labels tools: scanline
+`rasterizePolygon` (with holes), `pointInRing`/`pointInPolygonWithHoles`, `labelComponents` (4/8),
+`traceContours` (outer rings + holes along pixel edges, so a mask round-trips exactly), `floodFill`
+and `autoContrastLimits` (saturation-based auto contrast, also in the main entry). Rings are flat
+`[x0, y0, x1, y1, …]`; rasters are row-major `{ data, width, height }`.
+
+```ts
+import { traceContours, rasterizePolygon, floodFill } from 'napari-js/geometry';
+
+const mask = floodFill({ data, width, height }, seedX, seedY, { tolerance: 12 });
+const [blob] = traceContours({ data: mask, width, height }, { minSize: 4, minHoleSize: 4 });
+const back = rasterizePolygon(blob.outer, blob.holes); // the same pixels, as a bbox mask
+```
+
 ## Develop
 
 ```bash

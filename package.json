@@ -44,6 +44,10 @@
     "./colormaps": {
       "types": "./dist/colormaps/index.d.ts",
       "import": "./dist/colormaps.js"
+    },
+    "./geometry": {
+      "types": "./dist/geometry/index.d.ts",
+      "import": "./dist/geometry.js"
     }
   },
   "scripts": {

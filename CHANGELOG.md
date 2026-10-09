@@ -90,6 +90,14 @@ All notable changes to napari-js are documented here. The format roughly follows
 
 - **`INFERNO`** colormap (`'inferno'` by name).
 
+- **`napari-js/geometry`**: `rasterizePolygon` (scanline, pixel-centre rule, holes),
+  `pointInRing`/`pointInPolygonWithHoles`/`ringArea`, `labelComponents` (4/8-connected, by value),
+  `traceContours` (outer rings + holes along pixel edges, unclamped `origin`; exact round trip with
+  `rasterizePolygon`) and `floodFill`. Ported and generalised from SIV's wand service.
+
+- **`autoContrastLimits(histogram, saturation)`**: saturation-based auto contrast that clips a
+  fraction at each end and ignores a dominant padding bin. In the main entry and `geometry`.
+
 ### Changed
 
 - **`VIRIDIS` and `MAGMA` are matplotlib's exact 256-entry tables**, not 6-anchor approximations.

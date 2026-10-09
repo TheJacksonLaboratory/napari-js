@@ -8,8 +8,8 @@ export type { DeviceContext, DeviceFeatures } from './engine/device';
 export type { PixelData } from './engine/readback';
 
 // Readback / analysis
-export { histogramRGBA, histogramScalar, luminance8 } from './color/histogram';
-export type { Histogram } from './color/histogram';
+export { histogramRGBA, histogramScalar, luminance8, autoContrastLimits } from './color/histogram';
+export type { Histogram, AutoContrastOptions } from './color/histogram';
 
 // Model
 export { ViewerModel } from './scene/viewer-model';
