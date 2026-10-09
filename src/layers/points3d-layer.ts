@@ -13,6 +13,11 @@ export interface Points3DLayerOptions {
   /** Normalization window in value units (default: data min/max). */
   contrastLimits?: [number, number];
   gamma?: number;
+  /**
+   * Invert the colormap mapping (window → invert → gamma), as {@link ImageLayerOptions.invert}.
+   * Applies to the `values` path only; per-point `colors` are drawn as given.
+   */
+  invert?: boolean;
   /** Marker diameter in screen pixels. */
   size?: number;
   opacity?: number;
@@ -32,8 +37,8 @@ export interface Points3DLayerOptions {
   sizes?: Float32Array;
   /**
    * Per-point colour as packed RGBA 0..1 (length 4N, `[r0, g0, b0, a0, r1, …]`). When set it
-   * WINS over `values` + `colormap`: each point takes its own RGB, and the colormap, window and
-   * gamma no longer apply. Its alpha multiplies with `alphas` and the layer `opacity`.
+   * WINS over `values` + `colormap`: each point takes its own RGB, and the colormap, window,
+   * gamma and `invert` no longer apply. Its alpha multiplies with `alphas` and the layer `opacity`.
    *
    * This is how categorical colour gets in. Encoding categories as scalars into a stepped LUT
    * works, but caps the category count at what the LUT can resolve and puts the categories'
@@ -116,6 +121,7 @@ export class Points3DLayer extends Layer {
   /** Whether the caller pinned the window, or it was derived from the values. */
   private _contrastExplicit: boolean;
   private _gamma: number;
+  private _invert: boolean;
   private _size: number;
 
   constructor(positions: Float32Array, values?: Float32Array, opts: Points3DLayerOptions = {}) {
@@ -138,6 +144,7 @@ export class Points3DLayer extends Layer {
     this._contrastLimits = opts.contrastLimits ?? valueRange(vals);
     this._contrastExplicit = opts.contrastLimits !== undefined;
     this._gamma = opts.gamma ?? 1;
+    this._invert = opts.invert ?? false;
     this._size = opts.size ?? 6;
     this._blending = opts.blending ?? 'translucent';
     if (opts.opacity !== undefined) this._opacity = opts.opacity;
@@ -192,8 +199,8 @@ export class Points3DLayer extends Layer {
    * what a host wants for a legend swatch or a tooltip.
    *
    *  - With {@link colors}: `rgb = colors[i].rgb`, `a = colors[i].a × alphas[i]`.
-   *    `values`, the colormap, the window and gamma do not apply.
-   *  - Without: `rgb = colormap(window → gamma (values[i]))`, `a = alphas[i]`.
+   *    `values`, the colormap, the window, gamma and `invert` do not apply.
+   *  - Without: `rgb = colormap(window → invert → gamma (values[i]))`, `a = alphas[i]`.
    *
    * Alphas are clamped to 0..1, as the shader clamps them.
    */
@@ -209,7 +216,7 @@ export class Points3DLayer extends Layer {
       climLo: lo,
       climHi: hi,
       gamma: this._gamma,
-      invert: false,
+      invert: this._invert,
       colormap: this._colormap,
     });
     return [r, g, b, alpha];
@@ -255,6 +262,19 @@ export class Points3DLayer extends Layer {
   set contrastLimits(value: readonly [number, number]) {
     this._contrastLimits = [value[0], value[1]];
     this._contrastExplicit = true;
+    this.changed.emit(this);
+  }
+
+  /**
+   * Flip the windowed value before gamma (`t → 1 − t`), so the low end of the window takes the
+   * top of the colormap — the same order as {@link ImageLayer.invert} and {@link windowGamma}.
+   * A uniform: no re-upload. Ignored for points coloured by {@link colors}.
+   */
+  get invert(): boolean {
+    return this._invert;
+  }
+  set invert(value: boolean) {
+    this._invert = value;
     this.changed.emit(this);
   }
 

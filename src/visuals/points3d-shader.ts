@@ -1,5 +1,5 @@
 // 3D scatter: instanced screen-facing billboards at 3D positions, sized in screen pixels, with an
-// antialiased disc SDF and per-point value → windowed → gamma → colormap LUT. Depth is written at
+// antialiased disc SDF and per-point value → windowed → invert → gamma → colormap LUT. Depth is written at
 // the point's center depth so points occlude correctly under the orbit camera. Premultiplied output.
 //
 // Each instance also carries a per-point alpha and size multiplier. Both default to 1 on the CPU
@@ -15,7 +15,7 @@ struct U {
   mvp : mat4x4<f32>,
   params : vec4<f32>,   // viewportW, viewportH, sizePx, opacity
   window : vec4<f32>,   // lo, hi, gamma, 0
-  flags : vec4<f32>,    // perPointColor, 0, 0, 0
+  flags : vec4<f32>,    // perPointColor, invert, 0, 0
 };
 @group(0) @binding(0) var<uniform> u : U;
 @group(0) @binding(1) var lutSampler : sampler;
@@ -67,7 +67,9 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
 
   let lo = u.window.x;
   let hi = u.window.y;
-  let t = clamp((in.value - lo) / max(hi - lo, 1e-6), 0.0, 1.0);
+  // window → invert → gamma, the order of windowGamma() and the image shader.
+  var t = clamp((in.value - lo) / max(hi - lo, 1e-6), 0.0, 1.0);
+  if (u.flags.y > 0.5) { t = 1.0 - t; }
   let g = pow(t, u.window.z);
   let mapped = textureSample(lut, lutSampler, vec2<f32>(g, 0.5)).rgb;
 

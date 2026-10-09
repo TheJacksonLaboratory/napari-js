@@ -10,6 +10,8 @@ export interface SurfaceLayerOptions {
   /** Normalization window in vertex-value units (default: data min/max). */
   contrastLimits?: [number, number];
   gamma?: number;
+  /** Invert the colormap mapping (window → invert → gamma), as {@link ImageLayerOptions.invert}. */
+  invert?: boolean;
   opacity?: number;
   blending?: BlendMode;
   visible?: boolean;
@@ -66,6 +68,7 @@ export class SurfaceLayer extends Layer {
   private _colormap: Colormap;
   private _contrastLimits: [number, number];
   private _gamma: number;
+  private _invert: boolean;
   private _wireframe: boolean;
 
   constructor(
@@ -94,6 +97,7 @@ export class SurfaceLayer extends Layer {
     this._colormap = resolveColormap(opts.colormap ?? 'viridis');
     this._contrastLimits = opts.contrastLimits ?? valueRange(vals);
     this._gamma = opts.gamma ?? 1;
+    this._invert = opts.invert ?? false;
     this._wireframe = opts.wireframe ?? false;
     this._blending = opts.blending ?? 'opaque';
     if (opts.opacity !== undefined) this._opacity = opts.opacity;
@@ -114,6 +118,19 @@ export class SurfaceLayer extends Layer {
   }
   set contrastLimits(value: readonly [number, number]) {
     this._contrastLimits = [value[0], value[1]];
+    this.changed.emit(this);
+  }
+
+  /**
+   * Flip the windowed value before gamma (`t → 1 − t`), so the low end of the window takes the
+   * top of the colormap — the same order as {@link ImageLayer.invert} and {@link windowGamma}.
+   * A uniform: no re-upload.
+   */
+  get invert(): boolean {
+    return this._invert;
+  }
+  set invert(value: boolean) {
+    this._invert = value;
     this.changed.emit(this);
   }
 

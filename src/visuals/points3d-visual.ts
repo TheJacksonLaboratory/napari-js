@@ -42,7 +42,7 @@ export function packPoints3DUniforms(
   out[22] = layer.gamma;
   out[23] = 0;
   out[24] = layer.colors ? 1 : 0;
-  out[25] = 0;
+  out[25] = layer.invert ? 1 : 0;
   out[26] = 0;
   out[27] = 0;
 }

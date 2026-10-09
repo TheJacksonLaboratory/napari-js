@@ -2,11 +2,17 @@
 // volume space (via invMVP applied to near/far clip points), intersects the [0,1]^3 box, and
 // marches a 3D texture. Modes: MIP, front-to-back translucent DVR, and iso-surface with a
 // central-difference gradient + lambert shading. Ported from napari's volume path (docs/04).
+//
+// Colour follows the image pipeline — window → invert → gamma → LUT, as windowGamma() — but the
+// march itself (the MIP maximum, the translucent alpha, the iso threshold) runs on the
+// un-inverted windowed value. Inverting those would make the empty space around an object the
+// brightest, most opaque thing in the box; inverting only the colour keeps what is drawn and
+// changes how it is coloured.
 export const VOLUME_SHADER = /* wgsl */ `
 struct U {
   invMvp : mat4x4<f32>,
   params : vec4<f32>,   // climLo, climHi (normalized 0..1), gamma, opacity
-  params2 : vec4<f32>,  // renderingCode (0=mip,1=translucent,2=iso), isoThreshold, steps, 0
+  params2 : vec4<f32>,  // renderingCode (0=mip,1=translucent,2=iso), isoThreshold, steps, invert
 };
 @group(0) @binding(0) var<uniform> u : U;
 @group(0) @binding(1) var volSamp : sampler;
@@ -37,16 +43,28 @@ fn unproject(ndc : vec2<f32>, z : f32) -> vec3<f32> {
   return p.xyz / p.w;
 }
 
-fn sampleWindowed(pos : vec3<f32>) -> f32 {
+// The windowed sample in 0..1, BEFORE gamma: what the colour is mapped from.
+fn sampleT(pos : vec3<f32>) -> f32 {
   let s = textureSampleLevel(volTex, volSamp, pos, 0.0).r;
   let lo = u.params.x;
   let hi = u.params.y;
-  let t = clamp((s - lo) / max(hi - lo, 1e-6), 0.0, 1.0);
-  return pow(t, u.params.z);
+  return clamp((s - lo) / max(hi - lo, 1e-6), 0.0, 1.0);
+}
+
+// Windowed + gamma, un-inverted: what the march projects, accumulates and thresholds.
+fn sampleWindowed(pos : vec3<f32>) -> f32 {
+  return pow(sampleT(pos), u.params.z);
 }
 
 fn lutColor(t : f32) -> vec3<f32> {
   return textureSampleLevel(lut, lutSamp, vec2<f32>(clamp(t, 0.0, 1.0), 0.5), 0.0).rgb;
+}
+
+// Colour of a windowed sample t: invert → gamma → LUT, the order of windowGamma().
+fn shade(t : f32) -> vec3<f32> {
+  var x = t;
+  if (u.params2.w > 0.5) { x = 1.0 - x; }
+  return lutColor(pow(x, u.params.z));
 }
 
 @fragment
@@ -77,15 +95,16 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
   for (var i = 0; i < steps; i = i + 1) {
     let t = tNear + (f32(i) + 0.5) * dt;
     let pos = ro + rd * t;
-    let w = sampleWindowed(pos);
+    let tw = sampleT(pos);
+    let w = pow(tw, u.params.z);
 
     if (mode < 0.5) {
-      // MIP
-      maxT = max(maxT, w);
+      // MIP, on the pre-gamma value: pow is monotonic, so it is the same voxel.
+      maxT = max(maxT, tw);
     } else if (mode < 1.5) {
       // Front-to-back translucent DVR
       let a = w * opacity;
-      let c = lutColor(w);
+      let c = shade(tw);
       col = col + (1.0 - acc) * c * a;
       acc = acc + (1.0 - acc) * a;
       if (acc >= 0.99) { break; }
@@ -99,7 +118,7 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
         let n = normalize(vec3<f32>(gx, gy, gz) + vec3<f32>(1e-5));
         let lightDir = normalize(vec3<f32>(0.5, 0.7, 1.0));
         let lambert = max(dot(n, lightDir), 0.0) * 0.8 + 0.2;
-        col = lutColor(w) * lambert;
+        col = shade(tw) * lambert;
         acc = opacity;
         break;
       }
@@ -108,7 +127,7 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
 
   if (mode < 0.5) {
     if (maxT <= 0.0) { discard; }
-    col = lutColor(maxT);
+    col = shade(maxT);
     acc = opacity;
   }
   if (acc <= 0.0) { discard; }

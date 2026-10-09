@@ -22,6 +22,9 @@ export interface VolumeChannel {
   colormap?: Colormap | string;
   contrastLimits?: [number, number];
   gamma?: number;
+  /** Invert the colour mapping (window → invert → gamma), as {@link VolumeLayer.invert}. Lets a
+   *  host flip a channel without building a reversed colormap for it. */
+  invert?: boolean;
   visible?: boolean;
   /** World size of one voxel per axis (napari's `scale`); keeps an anisotropic stack's true
    *  proportions. All channels of a volume share the same grid, so pass the same value. */
@@ -30,7 +33,7 @@ export interface VolumeChannel {
 
 /** Live display patch for a single volume channel (see {@link MultiChannelVolumeView.updateChannel}). */
 export type VolumeChannelUpdate = Partial<
-  Pick<VolumeChannel, 'tint' | 'colormap' | 'contrastLimits' | 'gamma' | 'visible'>
+  Pick<VolumeChannel, 'tint' | 'colormap' | 'contrastLimits' | 'gamma' | 'invert' | 'visible'>
 >;
 
 export interface MultiChannelVolumeRenderOptions {
@@ -97,6 +100,7 @@ export class MultiChannelVolumeView {
         colormap: ch.colormap ?? (ch.tint != null ? tintColormap(ch.tint) : 'gray'),
         contrastLimits: ch.contrastLimits ?? [0, 255],
         gamma: ch.gamma ?? 1,
+        invert: ch.invert ?? false,
         visible: ch.visible ?? true,
         rendering,
         ...(ch.voxelSize ? { voxelSize: ch.voxelSize } : {}),
@@ -118,6 +122,7 @@ export class MultiChannelVolumeView {
     else if (patch.tint !== undefined) layer.colormap = tintColormap(patch.tint);
     if (patch.contrastLimits !== undefined) layer.contrastLimits = patch.contrastLimits;
     if (patch.gamma !== undefined) layer.gamma = patch.gamma;
+    if (patch.invert !== undefined) layer.invert = patch.invert;
     if (patch.visible !== undefined) layer.visible = patch.visible;
     this.host.requestRender();
   }

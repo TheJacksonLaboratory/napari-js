@@ -18,6 +18,11 @@ All notable changes to napari-js are documented here. The format roughly follows
   `values` + `colormap`, its alpha multiplies `alphas`, and it moves only the style clock.
   `Points3DLayer.colorAt(i)` is the CPU reference for that combination. Wrong lengths throw.
 
+- **`invert` on `VolumeLayer`, `SurfaceLayer` and `Points3DLayer`** (option + live setter), and on
+  `VolumeChannel`/`VolumeChannelUpdate`, with `ImageLayer`'s order: window → invert → gamma →
+  colormap. Replaces reversing the colormap, which differs once gamma ≠ 1. On a volume only the
+  colour inverts; the MIP maximum, translucent alpha and iso threshold use the un-inverted value.
+
 ## [0.13.0]
 
 ### Added
