@@ -30,11 +30,14 @@ export class LayerList implements Iterable<Layer> {
     return this._items.length;
   }
 
+  /**
+   * Add `layer` on top of the draw order. Emits `added` then `changed`.
+   *
+   * Throws for a layer that is already in the list, like {@link insert}: a layer is mounted at
+   * most once, or removing one of its two slots would fire `removed` while it is still drawn.
+   */
   add(layer: Layer): Layer {
-    this._items.push(layer);
-    this.added.emit(layer);
-    this.changed.emit(this);
-    return layer;
+    return this.mount(this._items.length, layer);
   }
 
   /**
@@ -46,10 +49,15 @@ export class LayerList implements Iterable<Layer> {
    * and reordering one that is mounted is what {@link move} is for.
    */
   insert(index: number, layer: Layer): Layer {
+    return this.mount(clampIndex(index, this._items.length), layer);
+  }
+
+  /** The one path that mounts a layer: enforces "at most once", then splices and emits. */
+  private mount(index: number, layer: Layer): Layer {
     if (this._items.includes(layer)) {
       throw new Error(`Layer "${layer.name}" is already in the list; use move() to reorder it.`);
     }
-    this._items.splice(clampIndex(index, this._items.length), 0, layer);
+    this._items.splice(index, 0, layer);
     this.added.emit(layer);
     this.changed.emit(this);
     return layer;

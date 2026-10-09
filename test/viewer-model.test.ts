@@ -44,6 +44,20 @@ describe('ViewerModel', () => {
   });
 });
 
+describe('ViewerModel with a duplicate add', () => {
+  it('keeps one listener per layer, so a removed layer stops forwarding changes', () => {
+    const m = new ViewerModel();
+    const a = m.layers.add(new PointsLayer([[0, 0]]));
+    // A second add used to mount `a` twice and overwrite its disposer, leaking a listener.
+    expect(() => m.layers.add(a)).toThrow(/already in the list/);
+    m.layers.remove(a);
+    let changed = 0;
+    m.changed.connect(() => changed++);
+    a.opacity = 0.5;
+    expect(changed).toBe(0);
+  });
+});
+
 describe('ViewerModel after a layer move', () => {
   it('still forwards the moved layer’s changes, and the move itself', () => {
     const m = new ViewerModel();

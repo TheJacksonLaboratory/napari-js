@@ -106,6 +106,16 @@ describe('LayerList reorder (move / insert)', () => {
     expect(log).toEqual(['added:x', 'changed', 'added:bottom', 'changed', 'added:top', 'changed']);
   });
 
+  it('add refuses a layer that is already mounted, like insert, and emits nothing', () => {
+    const { list, b } = three();
+    let events = 0;
+    list.added.connect(() => events++);
+    list.changed.connect(() => events++);
+    expect(() => list.add(b)).toThrow(/already in the list; use move\(\)/);
+    expect(names(list)).toEqual(['a', 'b', 'c']);
+    expect(events).toBe(0);
+  });
+
   it('insert refuses a layer that is already mounted', () => {
     const { list, b } = three();
     expect(() => list.insert(0, b)).toThrow(/already in the list; use move\(\)/);
