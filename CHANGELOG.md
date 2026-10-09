@@ -56,6 +56,11 @@ All notable changes to napari-js are documented here. The format roughly follows
   re-projection on camera / data / resize into reused buffers, the screen index, layer-style
   radii and muting. `Viewer.viewportSize()` gives the canvas size in CSS px.
 
+- **`Viewer.canvasTransform()` and `worldToCanvasLocal(x, y)`** (on `ViewerBase`, so also
+  `HeadlessViewer`): the 2D camera's world → canvas-local CSS-px affine `[a, b, c, d, e, f]` and
+  its point form, with no `getBoundingClientRect()` read. An SVG overlay sets one
+  `matrix(...)` per camera change instead of a layout read per vertex.
+
 ## [0.13.0]
 
 ### Added

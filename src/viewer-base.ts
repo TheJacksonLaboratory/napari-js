@@ -224,8 +224,39 @@ export abstract class ViewerBase {
   }
 
   /**
-   * The canvas size in CSS pixels — the units pointer events and {@link projectPoints}
-   * use. `[0, 0]` before the canvas is laid out.
+   * The 2D camera's world → canvas-local CSS-pixel transform as an SVG/Canvas2D affine
+   * `[a, b, c, d, e, f]` (`x' = a·x + c·y + e`, `y' = b·x + d·y + f`) — usable directly as
+   * `<g transform="matrix(a,b,c,d,e,f)">` or `ctx.setTransform(...)`.
+   *
+   * Reads no layout: it comes from the camera and the canvas's CSS size
+   * ({@link viewportSize}, what the renderer projects with), so an overlay can update one
+   * attribute per camera change instead of calling {@link worldToCanvas} — which reads
+   * `getBoundingClientRect()` — per vertex. Equal to `worldToCanvas` minus the canvas's
+   * client-rect origin whenever the rect is the CSS size (no border, no CSS transform).
+   * World coordinates, so a layer's own `scale`/`translate` is not included. 2D only.
+   */
+  canvasTransform(): [number, number, number, number, number, number] {
+    const [vw, vh] = this.viewportSize();
+    const { zoom } = this.model.camera;
+    const [cx, cy] = this.model.camera.center;
+    return [zoom, 0, 0, zoom, vw / 2 - cx * zoom, vh / 2 - cy * zoom];
+  }
+
+  /**
+   * World → canvas-local CSS pixels under the 2D camera: {@link canvasTransform} applied to
+   * one point. No layout read, unlike {@link worldToCanvas}, which returns client
+   * (page-viewport) coordinates.
+   */
+  worldToCanvasLocal(worldX: number, worldY: number): [number, number] {
+    const [vw, vh] = this.viewportSize();
+    const { zoom } = this.model.camera;
+    const [cx, cy] = this.model.camera.center;
+    return [vw / 2 + (worldX - cx) * zoom, vh / 2 + (worldY - cy) * zoom];
+  }
+
+  /**
+   * The canvas size in CSS pixels — the units pointer events, {@link projectPoints} and
+   * {@link worldToCanvasLocal} use. `[0, 0]` before the canvas is laid out.
    */
   viewportSize(): [number, number] {
     return [
