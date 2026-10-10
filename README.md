@@ -70,6 +70,70 @@ A layer's data is any `TextureSource` input: an `ImageBitmap`, a typed-array des
 (`{ kind: 'typed', width, height, channels, dtype, data }`), or a pyramidal
 `{ kind: 'tiled', …, fetchTile }`. Full API in [docs/02](./docs/02-public-api.md).
 
+### Testing without a GPU: `napari-js/testing`
+
+Unit tests (Vitest, Jest) have no WebGPU. `napari-js/testing` is the whole public API with `Viewer`
+bound to `HeadlessViewer`: the real `ViewerModel`, `LayerList`, cameras and layers, the real
+`add*`, `fitToLayers` and `worldToCanvas`, with no device. Nothing is drawn, `ready` is already
+resolved, and readback returns a blank frame.
+
+```ts
+import { HeadlessViewer } from 'napari-js/testing';
+
+const viewer = new HeadlessViewer({ canvasRect: { left: 100, top: 50, width: 800, height: 600 } });
+const cloud = viewer.addPoints3D(positions); // a real Points3DLayer, validated as usual
+viewer.fitToLayers(); // frames exactly as Viewer does
+viewer.worldToCanvas(x, y); // includes the canvas offset
+```
+
+To run code that does `new Viewer({ canvas })` unchanged, point the test runner's `napari-js` at
+it: Jest `moduleNameMapper: { '^napari-js$': '<rootDir>/node_modules/napari-js/dist/testing.js' }`
+(and let Jest transform `napari-js`, which is ESM), or a Vitest `resolve.alias`. Layers it builds
+are instances of the same classes `napari-js` exports.
+
+### Overlays: `napari-js/overlays`
+
+DOM chrome over the canvas, as napari's viewer overlays: a physical scale bar (2D zoom, or the 3D
+camera at its target's depth), crisp 3D axis labels, and an OpenSeadragon-style 2D navigator. Each
+takes `(host, viewer, opts)` and has `dispose()`; the main bundle does not include them.
+
+```ts
+import { ScaleBarOverlay, NavigatorOverlay, scaleBarFor } from 'napari-js/overlays';
+
+const bar = new ScaleBarOverlay(host, viewer, { unitPerWorld: 0.25, unit: 'µm' });
+const nav = new NavigatorOverlay(host, viewer, { worldWidth: w, worldHeight: h, image: thumb });
+scaleBarFor(pxPerWorld, umPerWorld, 120); // the pure maths, for a bar drawn elsewhere
+```
+
+### Exact matplotlib colormaps: `napari-js/colormaps`
+
+All 83 matplotlib colormaps as exact 256-entry RGB tables, one tree-shakeable `Uint8Array(768)` per
+map, so a bundle keeps only the maps it imports (about 1 KB each). The main entry's `VIRIDIS`,
+`MAGMA` and `INFERNO` already use the exact tables.
+
+```ts
+import { TURBO_LUT, lutColormap, matplotlibColormap } from 'napari-js/colormaps';
+
+viewer.addImage(img, { colormap: lutColormap('turbo', TURBO_LUT) });
+matplotlibColormap('RdBu'); // by name, via the COLORMAP_LUTS registry (keeps every map)
+```
+
+### Geometry: `napari-js/geometry`
+
+Framework-free raster/vector geometry, the operations behind napari's Labels tools: scanline
+`rasterizePolygon` (with holes), `pointInRing`/`pointInPolygonWithHoles`, `labelComponents` (4/8),
+`traceContours` (outer rings + holes along pixel edges, so a mask round-trips exactly), `floodFill`
+and `autoContrastLimits` (saturation-based auto contrast, also in the main entry). Rings are flat
+`[x0, y0, x1, y1, …]`; rasters are row-major `{ data, width, height }`.
+
+```ts
+import { traceContours, rasterizePolygon, floodFill } from 'napari-js/geometry';
+
+const mask = floodFill({ data, width, height }, seedX, seedY, { tolerance: 12 });
+const [blob] = traceContours({ data: mask, width, height }, { minSize: 4, minHoleSize: 4 });
+const back = rasterizePolygon(blob.outer, blob.holes); // the same pixels, as a bbox mask
+```
+
 ## Develop
 
 ```bash

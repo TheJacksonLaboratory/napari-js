@@ -9,6 +9,7 @@ import { buildLut, LUT_SIZE } from '../color/lut';
 import { GRAY } from '../color/colormap';
 import { formatPlanFor, toUploadData, type FormatPlan } from './format-plan';
 import { IMAGE_COLORMAP_SHADER } from './image-colormap-shader';
+import { packImageDisplayUniforms } from './image-visual';
 import { blendStateFor } from './blend';
 
 const UNIFORM_FLOATS = 28;
@@ -224,15 +225,7 @@ export class TiledImageVisual implements LayerVisual {
     s[17] = tile.h;
     s[18] = tile.x;
     s[19] = tile.y;
-    const [lo, hi] = this.layer.contrastLimits;
-    s[20] = lo * this.plan.sampleScale;
-    s[21] = hi * this.plan.sampleScale;
-    s[22] = this.layer.gamma;
-    s[23] = this.layer.opacity;
-    s[24] = this.plan.isRgba ? 1 : 0;
-    s[25] = this.layer.invert ? 1 : 0;
-    s[26] = 0;
-    s[27] = 0;
+    packImageDisplayUniforms(s, this.layer, this.plan.sampleScale, this.plan.isRgba);
     this.device.queue.writeBuffer(entry.uniformBuffer, 0, s);
     pass.setBindGroup(0, entry.bindGroup);
     pass.draw(6);

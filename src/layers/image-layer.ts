@@ -12,6 +12,13 @@ export interface ImageLayerOptions {
   contrastLimits?: [number, number];
   gamma?: number;
   invert?: boolean;
+  /**
+   * Scalar sources only: values at or below the low contrast limit draw fully transparent
+   * instead of as the colormap's bottom colour — a density or heat map over an image, with
+   * "nothing here" see-through. Compared in data units before `invert`, so moving
+   * `contrastLimits` moves the cut-off without re-uploading anything. Default false.
+   */
+  transparentBelow?: boolean;
   opacity?: number;
   blending?: BlendMode;
   visible?: boolean;
@@ -37,6 +44,7 @@ export class ImageLayer extends Layer {
   private _contrastLimits: [number, number];
   private _gamma: number;
   private _invert: boolean;
+  private _transparentBelow: boolean;
   private _interpolation: Interpolation;
 
   constructor(source: TextureSource, opts: ImageLayerOptions = {}) {
@@ -47,6 +55,7 @@ export class ImageLayer extends Layer {
     this._contrastLimits = opts.contrastLimits ?? defaultContrastLimits(source);
     this._gamma = opts.gamma ?? 1;
     this._invert = opts.invert ?? false;
+    this._transparentBelow = opts.transparentBelow ?? false;
     this._interpolation = opts.interpolation ?? 'linear';
     if (opts.opacity !== undefined) this._opacity = opts.opacity;
     if (opts.blending !== undefined) this._blending = opts.blending;
@@ -84,6 +93,15 @@ export class ImageLayer extends Layer {
   }
   set invert(value: boolean) {
     this._invert = value;
+    this.changed.emit(this);
+  }
+
+  /** See {@link ImageLayerOptions.transparentBelow}. A uniform: no LUT or texture rebuild. */
+  get transparentBelow(): boolean {
+    return this._transparentBelow;
+  }
+  set transparentBelow(value: boolean) {
+    this._transparentBelow = value;
     this.changed.emit(this);
   }
 

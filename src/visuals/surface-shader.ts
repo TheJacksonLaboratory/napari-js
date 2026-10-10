@@ -1,4 +1,4 @@
-// Triangle-mesh surface: per-vertex scalar → windowed → gamma → colormap LUT, with two-sided
+// Triangle-mesh surface: per-vertex scalar → windowed → invert → gamma → colormap LUT, with two-sided
 // flat shading. Normals are derived per-fragment from screen-space derivatives of world position
 // (dpdx/dpdy), so no per-vertex normals or normal matrix are needed. Premultiplied output for the
 // canvas 'premultiplied' alpha mode. Depth is written by the pipeline (see surface-visual.ts).
@@ -7,7 +7,7 @@ struct U {
   mvp : mat4x4<f32>,
   params : vec4<f32>,   // lo, hi, gamma, opacity
   light : vec4<f32>,    // lightDir.xyz (world, toward viewer), ambient
-  flags : vec4<f32>,    // wireframe (0/1), 0, 0, 0
+  flags : vec4<f32>,    // wireframe (0/1), invert (0/1), 0, 0
 };
 @group(0) @binding(0) var<uniform> u : U;
 @group(0) @binding(1) var lutSampler : sampler;
@@ -41,7 +41,9 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
 
   let lo = u.params.x;
   let hi = u.params.y;
-  let t = clamp((in.value - lo) / max(hi - lo, 1e-6), 0.0, 1.0);
+  // window → invert → gamma, the order of windowGamma() and the image shader.
+  var t = clamp((in.value - lo) / max(hi - lo, 1e-6), 0.0, 1.0);
+  if (u.flags.y > 0.5) { t = 1.0 - t; }
   let g = pow(t, u.params.z);               // gamma
   let rgb = textureSample(lut, lutSampler, vec2<f32>(g, 0.5)).rgb * shade;
 

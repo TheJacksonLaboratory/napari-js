@@ -97,3 +97,51 @@ describe('worldViewport', () => {
     });
   });
 });
+
+describe('visibleTiles options', () => {
+  // A 4×4 grid of 100-px tiles, fully in view.
+  const all = { x: 0, y: 0, width: 400, height: 400 };
+  const key = (t: { col: number; row: number }): string => `${t.col},${t.row}`;
+
+  it('defaults to the unchanged row-major list', () => {
+    const plain = visibleTiles(all, 400, 400, 0, 100);
+    expect(visibleTiles(all, 400, 400, 0, 100, undefined, {})).toEqual(plain);
+    expect(visibleTiles(all, 400, 400, 0, 100, undefined, { order: 'row-major' })).toEqual(plain);
+    expect(plain.map(key).slice(0, 5)).toEqual(['0,0', '1,0', '2,0', '3,0', '0,1']);
+  });
+
+  it("'center-out' puts the tiles nearest the view centre first, ties row-major", () => {
+    const tiles = visibleTiles(all, 400, 400, 0, 100, undefined, { order: 'center-out' });
+    expect(tiles).toHaveLength(16);
+    // The four central tiles, equidistant from (200, 200), in row-major order.
+    expect(tiles.slice(0, 4).map(key)).toEqual(['1,1', '2,1', '1,2', '2,2']);
+    // Corners last.
+    expect(tiles.slice(12).map(key).sort()).toEqual(['0,0', '0,3', '3,0', '3,3']);
+    // Same set as row-major.
+    expect(tiles.map(key).sort()).toEqual(visibleTiles(all, 400, 400, 0, 100).map(key).sort());
+  });
+
+  it('centres on the unclipped view, so a view hanging off the image orders from its middle', () => {
+    // View centred at (350, 50): the top-right tile first.
+    const view = { x: 150, y: -150, width: 400, height: 400 };
+    const tiles = visibleTiles(view, 400, 400, 0, 100, undefined, { order: 'center-out' });
+    expect(key(tiles[0])).toBe('3,0');
+  });
+
+  it('limit keeps the first N after ordering', () => {
+    const near = visibleTiles(all, 400, 400, 0, 100, undefined, { order: 'center-out', limit: 4 });
+    expect(near.map(key)).toEqual(['1,1', '2,1', '1,2', '2,2']);
+    const firstRow = visibleTiles(all, 400, 400, 0, 100, undefined, { limit: 3 });
+    expect(firstRow.map(key)).toEqual(['0,0', '1,0', '2,0']);
+    expect(visibleTiles(all, 400, 400, 0, 100, undefined, { limit: 0 })).toEqual([]);
+    expect(visibleTiles(all, 400, 400, 0, 100, undefined, { limit: 99 })).toHaveLength(16);
+  });
+
+  it('works on coarser levels in level-0 coordinates', () => {
+    // Level 1: 200-px tiles over a 800×800 image; view centred at (500, 300).
+    const view = { x: 300, y: 100, width: 400, height: 400 };
+    const tiles = visibleTiles(view, 800, 800, 1, 100, undefined, { order: 'center-out' });
+    expect(key(tiles[0])).toBe('2,1');
+    expect(tiles[0]).toMatchObject({ x: 400, y: 200, w: 200, h: 200 });
+  });
+});

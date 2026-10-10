@@ -8,12 +8,13 @@ export type { DeviceContext, DeviceFeatures } from './engine/device';
 export type { PixelData } from './engine/readback';
 
 // Readback / analysis
-export { histogramRGBA, histogramScalar, luminance8 } from './color/histogram';
-export type { Histogram } from './color/histogram';
+export { histogramRGBA, histogramScalar, luminance8, autoContrastLimits } from './color/histogram';
+export type { Histogram, AutoContrastOptions } from './color/histogram';
 
 // Model
 export { ViewerModel } from './scene/viewer-model';
 export { LayerList } from './scene/layer-list';
+export type { LayerMove } from './scene/layer-list';
 export { Dims } from './scene/dims';
 export { Camera } from './camera/camera';
 export { Camera3D } from './camera/camera3d';
@@ -25,7 +26,21 @@ export type { BlendMode, Fit3D } from './layers/layer';
 export { ImageLayer } from './layers/image-layer';
 export type { ImageLayerOptions, Interpolation } from './layers/image-layer';
 export { PointsLayer } from './layers/points-layer';
-export type { PointsLayerOptions, PointSymbol, RGBA } from './layers/points-layer';
+export type {
+  PointsLayerOptions,
+  PointsPickOptions,
+  RGBA,
+  PointColorInput,
+} from './layers/points-layer';
+export {
+  POINT_SYMBOLS,
+  POINT_SYMBOL_ALIASES,
+  POINT_SYMBOL_LAYER_DEFAULT,
+  pointSymbolCode,
+  resolvePointSymbol,
+  pointSymbolDistance,
+} from './layers/point-symbols';
+export type { PointSymbol, PointSymbolAlias } from './layers/point-symbols';
 export { LabelsLayer } from './layers/labels-layer';
 export type { LabelsLayerOptions, LabelData } from './layers/labels-layer';
 export { VolumeLayer } from './layers/volume-layer';
@@ -52,6 +67,10 @@ export { nearestPointIndex, nearestProjectedIndex } from './picking/pick';
 export type { ProjectedPickOptions } from './picking/pick';
 export { ScreenIndex, pickLinear, SCREEN_INDEX_MIN_POINTS } from './picking/screen-index';
 export type { ScreenIndexOptions } from './picking/screen-index';
+export { GridIndex } from './picking/grid-index';
+export type { GridBounds, GridIndexOptions } from './picking/grid-index';
+export { PointPicker } from './picking/point-picker';
+export type { PointPickerHost, PointPickerOptions } from './picking/point-picker';
 export { projectPoint, projectPoints } from './picking/project';
 export type { ProjectedPoint, ProjectedPoints } from './picking/project';
 export { unionBounds, resolveFit, framingFor, Fit3DState } from './scene/fit';
@@ -72,11 +91,14 @@ export {
   BLUE,
   VIRIDIS,
   MAGMA,
+  INFERNO,
+  lutColormap,
 } from './color/colormap';
 export type { RGB, ColorStop } from './color/colormap';
+export { parseColor } from './color/parse';
 export { buildLut, LUT_SIZE } from './color/lut';
 export { buildLabelLut } from './color/label-colormap';
-export { windowGamma, mapScalar, additiveComposite } from './color/display-pipeline';
+export { windowGamma, mapScalar, mapScalarRGBA, additiveComposite } from './color/display-pipeline';
 
 // High-level views
 export { MultiChannelImageView } from './views/multichannel-image-view';
@@ -124,7 +146,34 @@ export {
   visibleTiles,
   worldViewport,
 } from './io/pyramid';
-export type { Rect, VisibleTile } from './io/pyramid';
+export type { Rect, VisibleTile, VisibleTilesOptions } from './io/pyramid';
+
+// Whole-level / volume reads from a tiled source
+export {
+  readLevel,
+  chooseStitchLevel,
+  downscaleImage,
+  DEFAULT_MAX_TEXTURE_DIM,
+  DEFAULT_TILE_CONCURRENCY,
+} from './io/stitch';
+export type {
+  ReadLevelOptions,
+  StitchBudget,
+  StitchLevelChoice,
+  StitchedImage,
+  PyramidGeometry,
+} from './io/stitch';
+export { assembleVolume, DEFAULT_SLICE_CONCURRENCY, DEFAULT_MAX_STITCH_TILES } from './io/volume';
+export type { AssembleVolumeOptions, AssembledVolume } from './io/volume';
+export { bitmapToScalar, rgbaToScalar, decodeImageRGBA, fitWithin } from './io/decode';
+export type {
+  ScalarWeights,
+  ScalarPlane,
+  RgbaPixels,
+  DrawableImage,
+  BitmapToScalarOptions,
+} from './io/decode';
+
 export { LruCache } from './cache/lru';
 
 export { VERSION } from './version';

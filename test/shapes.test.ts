@@ -6,6 +6,10 @@ import {
   ringsToFan,
   shapeVertexCount,
 } from '../src/layers/shapes-layer';
+import { packShapesUniforms, SHAPES_UNIFORM_FLOATS } from '../src/visuals/shapes-visual';
+import { SHAPES_SHADER } from '../src/visuals/shapes-shader';
+import { identity } from '../src/math/mat4';
+import { WINDOW_EPSILON } from '../src/color/display-pipeline';
 
 // Two shapes, as flat rings: a 2×2 square then a triangle.
 const SQUARE = [0, 0, 2, 0, 2, 2, 0, 2]; // vertices 0..3
@@ -309,5 +313,116 @@ describe('ShapesLayer contract', () => {
     expect(layer.gamma).toBe(2);
     layer.gamma = 0.5;
     expect(layer.gamma).toBe(0.5);
+  });
+});
+
+describe('ShapesLayer faceColor (per-shape colours)', () => {
+  // f32-exact values, so the assertions are about the packing and not about rounding.
+  const FACE = new Float32Array([1, 0, 0, 1, 0, 0.5, 0, 0.25]);
+  const VALUES = new Float32Array([10, 20]);
+
+  it('defaults to null and leaves the existing colour paths alone', () => {
+    expect(new ShapesLayer(COORDS, OFFSETS).faceColor).toBeNull();
+    expect(new ShapesLayer(COORDS, OFFSETS).colorMode()).toBe('flat');
+    expect(new ShapesLayer(COORDS, OFFSETS, { values: VALUES }).colorMode()).toBe('values');
+  });
+
+  it('wins over values + colormap, as Points3DLayer.colors does', () => {
+    const layer = new ShapesLayer(COORDS, OFFSETS, { values: VALUES, faceColor: FACE });
+    expect(layer.colorMode()).toBe('faceColor');
+    expect(layer.colorAt(0)).toEqual([1, 0, 0, 1]);
+    expect(layer.colorAt(1)).toEqual([0, 0.5, 0, 0.25]);
+    // The per-vertex attribute carries the shape INDEX, which the shader looks colours up by.
+    const { shapeIds } = layer.buildGeometry();
+    expect(Array.from(layer.buildVertexValues(shapeIds))).toEqual(Array.from(shapeIds));
+    // Null restores the values path.
+    layer.faceColor = null;
+    expect(layer.colorMode()).toBe('values');
+    expect(layer.buildVertexValues(shapeIds)[0]).toBe(10);
+  });
+
+  it('a single RGBA is the flat colour for every shape, over values and color', () => {
+    const layer = new ShapesLayer(COORDS, OFFSETS, {
+      values: VALUES,
+      color: [1, 1, 1, 1],
+      faceColor: [0, 0, 1, 0.5],
+    });
+    expect(layer.colorMode()).toBe('flat');
+    expect(layer.colorAt(1)).toEqual([0, 0, 1, 0.5]);
+  });
+
+  it('colorAt is the CPU reference for the values and flat paths too', () => {
+    const layer = new ShapesLayer(COORDS, OFFSETS, {
+      values: VALUES,
+      colormap: 'gray',
+      color: [1, 1, 1, 0.5],
+    });
+    expect(layer.colorAt(0)).toEqual([0, 0, 0, 0.5]);
+    expect(layer.colorAt(1)).toEqual([1, 1, 1, 0.5]);
+    expect(new ShapesLayer(COORDS, OFFSETS, { color: [0, 1, 0, 1] }).colorAt(0)).toEqual([
+      0, 1, 0, 1,
+    ]);
+  });
+
+  it('is settable: bumps faceColorVersion, and valueVersion only when the mode flips', () => {
+    const layer = new ShapesLayer(COORDS, OFFSETS, { values: VALUES });
+    let emitted = 0;
+    layer.changed.connect(() => emitted++);
+    const { dataVersion, valueVersion, faceColorVersion } = layer;
+    layer.faceColor = FACE;
+    expect(layer.faceColor).toBe(FACE); // by reference
+    expect(layer.valueVersion).toBe(valueVersion + 1); // attribute now carries the index
+    layer.faceColor = FACE.slice();
+    expect(layer.valueVersion).toBe(valueVersion + 1); // a recolour re-expands nothing
+    expect(layer.faceColorVersion).toBe(faceColorVersion + 2);
+    expect(layer.dataVersion).toBe(dataVersion);
+    expect(emitted).toBe(2);
+  });
+
+  it('rejects a packed array that is not 4 floats per shape, keeping the old value', () => {
+    expect(() => new ShapesLayer(COORDS, OFFSETS, { faceColor: new Float32Array(4) })).toThrow(
+      /faceColor length \(4\) must equal 4 × shape count \(8\)/,
+    );
+    const layer = new ShapesLayer(COORDS, OFFSETS, { faceColor: FACE });
+    expect(() => {
+      layer.faceColor = new Float32Array(12);
+    }).toThrow(/faceColor/);
+    expect(layer.faceColor).toBe(FACE);
+  });
+});
+
+describe('shapes uniforms and shader contract', () => {
+  const FACE = new Float32Array([1, 0, 0, 1, 0, 1, 0, 1]);
+  const pack = (layer: ShapesLayer): number[] => {
+    const out = new Float32Array(SHAPES_UNIFORM_FLOATS);
+    packShapesUniforms(out, layer, identity());
+    return Array.from(out.subarray(16, 25));
+  };
+
+  it('packs the colour mode into color.w: 0 flat, 1 values, 2 per-shape', () => {
+    const values = new Float32Array([0, 1]);
+    expect(pack(new ShapesLayer(COORDS, OFFSETS, { color: [0, 1, 0, 0.5] }))).toEqual([
+      0, 1, 1, 1, 0, 1, 0, 0, 0.5,
+    ]);
+    expect(pack(new ShapesLayer(COORDS, OFFSETS, { values }))[7]).toBe(1);
+    expect(pack(new ShapesLayer(COORDS, OFFSETS, { values, faceColor: FACE }))[7]).toBe(2);
+    // A single-RGBA faceColor is the flat colour, alpha included.
+    const flat = pack(new ShapesLayer(COORDS, OFFSETS, { values, faceColor: [0, 0, 1, 0.5] }));
+    expect([flat[4], flat[5], flat[6], flat[7], flat[8]]).toEqual([0, 0, 1, 0, 0.5]);
+  });
+
+  it('reads per-shape colours from a storage buffer by the rounded vertex scalar', () => {
+    expect(SHAPES_SHADER).toContain(
+      '@group(0) @binding(3) var<storage, read> faceColors : array<vec4<f32>>;',
+    );
+    expect(SHAPES_SHADER).toContain('faceColors[u32(round(in.value))]');
+    expect(SHAPES_SHADER).toMatch(/if \(u\.color\.w > 1\.5\)/);
+    expect(SHAPES_SHADER).toContain('let a = alpha * opacity;');
+  });
+});
+
+describe('ShapesLayer window epsilon', () => {
+  it('the shader floors the window width with windowGamma’s epsilon, like colorAt()', () => {
+    expect(SHAPES_SHADER).toContain(`max(hi - lo, ${WINDOW_EPSILON})`);
   });
 });

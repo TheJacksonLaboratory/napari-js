@@ -49,6 +49,67 @@ describe('PointsLayer.buildInstanceData', () => {
   });
 });
 
+describe('PointsLayer packed Float32Array colours', () => {
+  const pts = [
+    [0, 0],
+    [1, 1],
+    [2, 2],
+  ];
+  // f32-exact values, so the assertions are about the packing and not about rounding.
+  const FACE = new Float32Array([1, 0, 0, 1, 0, 0.5, 0, 0.25, 0, 0, 1, 0.75]);
+
+  it('copies packed per-point RGBA straight into the instance stride', () => {
+    const p = new PointsLayer(pts, { faceColor: FACE, borderColor: FACE.slice().reverse() });
+    const d = p.buildInstanceData();
+    for (let i = 0; i < 3; i++) {
+      const o = i * 12;
+      expect(Array.from(d.subarray(o + 3, o + 7))).toEqual(
+        Array.from(FACE.subarray(i * 4, i * 4 + 4)),
+      );
+    }
+    // Border too: the reversed array's middle point is [0.25, 0, 0.5, 0].
+    expect(Array.from(d.subarray(12 + 7, 12 + 11))).toEqual([0.25, 0, 0.5, 0]);
+  });
+
+  it('packs exactly what the equivalent RGBA[] tuples pack', () => {
+    const tuples = [0, 1, 2].map((i) => Array.from(FACE.subarray(i * 4, i * 4 + 4))) as [
+      number,
+      number,
+      number,
+      number,
+    ][];
+    const packed = new PointsLayer(pts, { faceColor: FACE }).buildInstanceData();
+    const fromTuples = new PointsLayer(pts, { faceColor: tuples }).buildInstanceData();
+    expect(Array.from(packed)).toEqual(Array.from(fromTuples));
+  });
+
+  it('is settable, bumping dataVersion and emitting', () => {
+    const p = new PointsLayer(pts);
+    let emitted = 0;
+    p.changed.connect(() => emitted++);
+    const v = p.dataVersion;
+    p.faceColor = FACE;
+    p.borderColor = FACE;
+    expect(p.dataVersion).toBe(v + 2);
+    expect(emitted).toBe(2);
+    expect(p.faceColor).toBe(FACE); // kept by reference, not copied into tuples
+    expect(p.buildInstanceData()[12 + 4]).toBe(0.5);
+  });
+
+  it('rejects a packed array that is not 4 floats per point', () => {
+    expect(() => new PointsLayer(pts, { faceColor: new Float32Array(8) })).toThrow(
+      /faceColor length \(8\) must equal 4 × point count \(12\)/,
+    );
+    expect(() => new PointsLayer(pts, { borderColor: new Float32Array(4) })).toThrow(/borderColor/);
+    const p = new PointsLayer(pts);
+    expect(() => {
+      p.faceColor = new Float32Array(13);
+    }).toThrow(/faceColor/);
+    // A failed assignment leaves the old colour in place.
+    expect(p.faceColor).toEqual([1, 1, 1, 1]);
+  });
+});
+
 describe('nearestPointIndex', () => {
   const positions = new Float32Array([0, 0, 100, 0, 100, 100]);
   const sizeAt = (): number => 20; // radius 10

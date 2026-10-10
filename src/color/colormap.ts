@@ -1,9 +1,17 @@
+import { VIRIDIS_LUT, MAGMA_LUT, INFERNO_LUT } from './matplotlib-luts';
+import { parseColor } from './parse';
+
 export type RGB = [number, number, number];
 
-/** A control point in a colormap: normalized position `t` (0..1) → linear RGB (0..1). */
+/**
+ * A control point in a colormap: normalized position `t` (0..1) → linear RGB, or RGBA, in
+ * 0..1. A stop without alpha is opaque. Alpha is interpolated like the channels and carried
+ * in the LUT; {@link ImageLayer} honours it (a scalar pixel's alpha is the LUT's alpha ×
+ * opacity), the other colormapped layers use the RGB only.
+ */
 export interface ColorStop {
   t: number;
-  color: RGB;
+  color: RGB | [number, number, number, number];
 }
 
 /**
@@ -25,26 +33,42 @@ export class Colormap {
 
   /** Sample the colormap at `t` (clamped to 0..1), returning linear RGB. */
   sample(t: number): RGB {
+    const [r, g, b] = this.sampleRGBA(t);
+    return [r, g, b];
+  }
+
+  /**
+   * Sample the colormap at `t` (clamped to 0..1), returning linear RGB plus alpha, interpolated
+   * between the stops (a stop without alpha counts as 1). What {@link buildLut} stores.
+   */
+  sampleRGBA(t: number): [number, number, number, number] {
     const x = t <= 0 ? 0 : t >= 1 ? 1 : t;
     const { stops } = this;
-    if (x <= stops[0].t) return [...stops[0].color];
+    if (x <= stops[0].t) return rgba(stops[0].color);
     const last = stops[stops.length - 1];
-    if (x >= last.t) return [...last.color];
+    if (x >= last.t) return rgba(last.color);
     for (let i = 1; i < stops.length; i++) {
       const hi = stops[i];
       if (x <= hi.t) {
         const lo = stops[i - 1];
         const span = hi.t - lo.t || 1;
         const f = (x - lo.t) / span;
+        const a0 = lo.color[3] ?? 1;
+        const a1 = hi.color[3] ?? 1;
         return [
           lo.color[0] + (hi.color[0] - lo.color[0]) * f,
           lo.color[1] + (hi.color[1] - lo.color[1]) * f,
           lo.color[2] + (hi.color[2] - lo.color[2]) * f,
+          a0 + (a1 - a0) * f,
         ];
       }
     }
-    return [...last.color];
+    return rgba(last.color);
   }
+}
+
+function rgba(c: ColorStop['color']): [number, number, number, number] {
+  return [c[0], c[1], c[2], c[3] ?? 1];
 }
 
 function ramp(name: string, color: RGB): Colormap {
@@ -60,24 +84,30 @@ export const RED = ramp('red', [1, 0, 0]);
 export const GREEN = ramp('green', [0, 1, 0]);
 export const BLUE = ramp('blue', [0, 0, 1]);
 
-// Compact perceptual maps (a handful of anchors, interpolated).
-export const VIRIDIS = new Colormap('viridis', [
-  { t: 0.0, color: [0.267, 0.005, 0.329] },
-  { t: 0.25, color: [0.275, 0.227, 0.494] },
-  { t: 0.5, color: [0.149, 0.443, 0.541] },
-  { t: 0.75, color: [0.122, 0.633, 0.531] },
-  { t: 0.9, color: [0.478, 0.821, 0.318] },
-  { t: 1.0, color: [0.993, 0.906, 0.144] },
-]);
+/**
+ * Build a `Colormap` from a flat RGB lookup table — `[r0, g0, b0, r1, g1, b1, …]`, bytes
+ * 0..`maxValue` (default 255) — with evenly spaced stops (`t = i / (n - 1)`). This is the form
+ * the exact matplotlib tables in `napari-js/colormaps` take (`Uint8Array(768)`); sampling the
+ * result at `i / (n - 1)` returns entry `i` exactly, so `buildLut` reproduces the table.
+ */
+export function lutColormap(name: string, lut: ArrayLike<number>, maxValue = 255): Colormap {
+  const n = Math.floor(lut.length / 3);
+  if (n < 2 || lut.length % 3 !== 0) {
+    throw new Error(`lutColormap("${name}") needs 3·n RGB values with n >= 2, got ${lut.length}.`);
+  }
+  const m = maxValue || 255;
+  const stops: ColorStop[] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    stops[i] = { t: i / (n - 1), color: [lut[i * 3] / m, lut[i * 3 + 1] / m, lut[i * 3 + 2] / m] };
+  }
+  return new Colormap(name, stops);
+}
 
-export const MAGMA = new Colormap('magma', [
-  { t: 0.0, color: [0.001, 0.0, 0.014] },
-  { t: 0.25, color: [0.232, 0.059, 0.437] },
-  { t: 0.5, color: [0.55, 0.161, 0.506] },
-  { t: 0.75, color: [0.868, 0.288, 0.41] },
-  { t: 0.9, color: [0.987, 0.6, 0.392] },
-  { t: 1.0, color: [0.987, 0.991, 0.749] },
-]);
+// Perceptual maps: matplotlib's exact 256-entry tables (≈1 KB each). Every other matplotlib map
+// is in the opt-in `napari-js/colormaps` subpath.
+export const VIRIDIS = /* @__PURE__ */ lutColormap('viridis', VIRIDIS_LUT);
+export const MAGMA = /* @__PURE__ */ lutColormap('magma', MAGMA_LUT);
+export const INFERNO = /* @__PURE__ */ lutColormap('inferno', INFERNO_LUT);
 
 export const NAMED_COLORMAPS: Record<string, Colormap> = {
   gray: GRAY,
@@ -87,6 +117,7 @@ export const NAMED_COLORMAPS: Record<string, Colormap> = {
   blue: BLUE,
   viridis: VIRIDIS,
   magma: MAGMA,
+  inferno: INFERNO,
 };
 
 /** Resolve a colormap name or pass through a `Colormap`. Throws on an unknown name. */
@@ -125,19 +156,26 @@ export function colormapFromLut(
 }
 
 /**
- * Build a black→`hex` ramp `Colormap` — a channel "tint" for additive multichannel compositing
- * (fluorescence). Accepts `#rgb` / `#rrggbb` (the leading `#` is optional); unparseable channels
- * fall back to 0, and an empty/missing value defaults to white.
+ * Build a black→`color` ramp `Colormap` — a channel "tint" for additive multichannel compositing
+ * (fluorescence). Accepts any colour {@link parseColor} does (`#rgb`, `#rrggbb`, `rgb()`, named
+ * …) and, for backwards compatibility, bare hex digits without the `#`. Alpha is ignored. An
+ * unparseable value gives black; an empty/missing one defaults to white. The name is
+ * `tint-rrggbb`.
  */
-export function tintColormap(hex: string): Colormap {
-  const h = (hex || '#ffffff').replace('#', '');
-  const full = h.length === 3 ? h[0] + h[0] + h[1] + h[1] + h[2] + h[2] : h;
-  const r = parseInt(full.slice(0, 2), 16) || 0;
-  const g = parseInt(full.slice(2, 4), 16) || 0;
-  const b = parseInt(full.slice(4, 6), 16) || 0;
-  return new Colormap(`tint-${full}`, [
+export function tintColormap(color: string): Colormap {
+  const s = (color || '#ffffff').trim();
+  const rgba = parseColor(/^[0-9a-f]{3,8}$/i.test(s) ? `#${s}` : s) ?? [0, 0, 0, 1];
+  const rgb: RGB = [rgba[0], rgba[1], rgba[2]];
+  const name = rgb
+    .map((v) =>
+      Math.round(v * 255)
+        .toString(16)
+        .padStart(2, '0'),
+    )
+    .join('');
+  return new Colormap(`tint-${name}`, [
     { t: 0, color: [0, 0, 0] },
-    { t: 1, color: [r / 255, g / 255, b / 255] },
+    { t: 1, color: rgb },
   ]);
 }
 

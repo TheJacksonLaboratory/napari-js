@@ -83,9 +83,25 @@ export function worldViewport(
   return { x: centerX - hw, y: centerY - hh, width: 2 * hw, height: 2 * hh };
 }
 
+/** Options for {@link visibleTiles}. The defaults reproduce the plain row-major list. */
+export interface VisibleTilesOptions {
+  /**
+   * `'row-major'` (default): top row first, left to right. `'center-out'`: nearest the
+   * view's centre first (by grid-cell centre; ties keep row-major order), so a streaming
+   * consumer that fetches in list order fills the middle of the screen first.
+   */
+  order?: 'row-major' | 'center-out';
+  /**
+   * Keep at most this many tiles, AFTER ordering — with `'center-out'`, the central ones.
+   * Default: all of them.
+   */
+  limit?: number;
+}
+
 /**
  * Tiles of `level` that overlap `view` (level-0 coords), with each tile's rect in level-0
  * coords (edge tiles clipped to the image bounds). Empty when the view misses the image.
+ * Row-major unless `opts` asks for centre-out order and/or a limit.
  */
 export function visibleTiles(
   view: Rect,
@@ -94,6 +110,7 @@ export function visibleTiles(
   level: number,
   tileSize: number,
   scales?: readonly number[],
+  opts: VisibleTilesOptions = {},
 ): VisibleTile[] {
   const tw = tileSize * levelScale(level, scales);
   const { cols, rows } = tileGrid(width, height, level, tileSize, scales);
@@ -117,5 +134,14 @@ export function visibleTiles(
       tiles.push({ col, row, x, y, w: Math.min(tw, width - x), h: Math.min(tw, height - y) });
     }
   }
+  if (opts.order === 'center-out') {
+    // In tile units, from the UNCLIPPED view's centre: what the user is looking at.
+    const cx = (view.x + view.width / 2) / tw;
+    const cy = (view.y + view.height / 2) / tw;
+    const d2 = (t: VisibleTile): number => (t.col + 0.5 - cx) ** 2 + (t.row + 0.5 - cy) ** 2;
+    tiles.sort((a, b) => d2(a) - d2(b)); // stable: equal distances stay row-major
+  }
+  const limit = opts.limit;
+  if (limit !== undefined && limit >= 0 && tiles.length > limit) tiles.length = Math.floor(limit);
   return tiles;
 }

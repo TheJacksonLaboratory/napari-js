@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Camera3D } from '../src/camera/camera3d';
 import { VolumeLayer } from '../src/layers/volume-layer';
+import { projectPoint } from '../src/picking/project';
 
 describe('Camera3D', () => {
   it('places the eye along +z at azimuth/elevation 0', () => {
@@ -59,6 +60,65 @@ describe('Camera3D', () => {
     const after = c.target;
     expect(after[0]).not.toBeCloseTo(before[0], 3);
     expect(n).toBe(1);
+  });
+});
+
+describe('Camera3D.worldPerPixel', () => {
+  it('is 2 · distance · tan(fov / 2) / viewportHeight', () => {
+    const c = new Camera3D();
+    c.distance = 10;
+    c.fov = Math.PI / 2; // tan(45°) = 1
+    expect(c.worldPerPixel(500)).toBeCloseTo(0.04, 12);
+    c.distance = 20;
+    expect(c.worldPerPixel(500)).toBeCloseTo(0.08, 12); // linear in distance
+    expect(c.worldPerPixel(1000)).toBeCloseTo(0.04, 12); // inverse in height
+  });
+
+  it('treats an unsized viewport as 1 px tall rather than dividing by zero', () => {
+    const c = new Camera3D();
+    expect(c.worldPerPixel(0)).toBe(c.worldPerPixel(1));
+    expect(Number.isFinite(c.worldPerPixel(-5))).toBe(true);
+  });
+
+  it('is exactly one pixel on screen at the target depth', () => {
+    // The property a scale bar relies on: a step of worldPerPixel(h) in the plane through the
+    // target, facing the camera, projects to 1 px, on either screen axis.
+    const c = new Camera3D();
+    c.azimuth = 0;
+    c.elevation = 0;
+    c.distance = 7;
+    c.target = [1, 2, 3];
+    const [vw, vh] = [800, 600];
+    const step = c.worldPerPixel(vh) * 50;
+    const mvp = c.viewProjection(vw, vh);
+    const o = projectPoint(mvp, [1, 2, 3], vw, vh);
+    const right = projectPoint(mvp, [1 + step, 2, 3], vw, vh);
+    const up = projectPoint(mvp, [1, 2 + step, 3], vw, vh);
+    expect(right.x - o.x).toBeCloseTo(50, 4); // f32 matrices
+    expect(o.y - up.y).toBeCloseTo(50, 4);
+  });
+
+  it('is what pan moves by, so pan is unchanged', () => {
+    // Pinned against the formula pan inlined before worldPerPixel existed.
+    const c = new Camera3D();
+    c.azimuth = 0;
+    c.elevation = 0;
+    c.distance = 10; // eye on +z: right = +x, up = +y
+    const old = (2 * 10 * Math.tan(c.fov / 2)) / 600;
+    c.pan(100, -40, 600);
+    const [x, y, z] = c.target;
+    expect(x).toBeCloseTo(-100 * old, 12); // drag right → target left
+    expect(y).toBeCloseTo(-40 * old, 12); // drag up → target down
+    expect(z).toBeCloseTo(0, 12);
+
+    // At an arbitrary pose the step is still |drag| · worldPerPixel, in the view plane.
+    const d = new Camera3D();
+    d.azimuth = 1.1;
+    d.elevation = -0.4;
+    d.distance = 3.5;
+    const wpp = d.worldPerPixel(480);
+    d.pan(30, 40, 480);
+    expect(Math.hypot(...d.target)).toBeCloseTo(50 * wpp, 12);
   });
 });
 

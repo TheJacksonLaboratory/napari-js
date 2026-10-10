@@ -2,13 +2,27 @@ import type { PointsLayer } from '../layers/points-layer';
 import { POINTS_INSTANCE_STRIDE } from '../layers/points-layer';
 import type { BlendMode } from '../layers/layer';
 import type { LayerVisual, RenderView } from './layer-visual';
-import { multiply, scaleTranslate2d } from '../math/mat4';
+import { multiply, scaleTranslate2d, type Mat4 } from '../math/mat4';
 import { POINTS_SHADER } from './points-shader';
 import { blendStateFor } from './blend';
 
 const STRIDE_BYTES = POINTS_INSTANCE_STRIDE * 4; // 48
-const UNIFORM_FLOATS = 20; // mat4(16) + vec4(4)
+/** mat4(16) + params vec4: layer symbol code, opacity, borderWidth, 0. */
+export const POINTS_UNIFORM_FLOATS = 20;
+const UNIFORM_FLOATS = POINTS_UNIFORM_FLOATS;
 const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
+
+/**
+ * Pack the per-frame uniforms (layout in points-shader.ts) into `out`. Pure, so what reaches
+ * the shader is testable without a device.
+ */
+export function packPointsUniforms(out: Float32Array, layer: PointsLayer, mvp: Mat4): void {
+  out.set(mvp, 0);
+  out[16] = layer.symbolCode();
+  out[17] = layer.opacity;
+  out[18] = layer.borderWidth;
+  out[19] = 0;
+}
 
 /** Renders a {@link PointsLayer} as instanced SDF markers. */
 export class PointsVisual implements LayerVisual {
@@ -50,7 +64,7 @@ export class PointsVisual implements LayerVisual {
               { shaderLocation: 1, offset: 8, format: 'float32' }, // size
               { shaderLocation: 2, offset: 12, format: 'float32x4' }, // face
               { shaderLocation: 3, offset: 28, format: 'float32x4' }, // border
-              { shaderLocation: 4, offset: 44, format: 'float32' }, // borderWidth
+              { shaderLocation: 4, offset: 44, format: 'float32' }, // symbol code / -1
             ],
           },
         ],
@@ -100,13 +114,8 @@ export class PointsVisual implements LayerVisual {
         this.layer.translate[1],
       ),
     );
-    const s = this.scratch;
-    s.set(mvp, 0);
-    s[16] = this.layer.symbolCode();
-    s[17] = this.layer.opacity;
-    s[18] = 0;
-    s[19] = 0;
-    this.device.queue.writeBuffer(this.uniformBuffer, 0, s);
+    packPointsUniforms(this.scratch, this.layer, mvp);
+    this.device.queue.writeBuffer(this.uniformBuffer, 0, this.scratch);
 
     const bindGroup = this.device.createBindGroup({
       layout: this.pipeline.getBindGroupLayout(0),

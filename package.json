@@ -32,6 +32,22 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/napari-js.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing.js"
+    },
+    "./overlays": {
+      "types": "./dist/overlays/index.d.ts",
+      "import": "./dist/overlays.js"
+    },
+    "./colormaps": {
+      "types": "./dist/colormaps/index.d.ts",
+      "import": "./dist/colormaps.js"
+    },
+    "./geometry": {
+      "types": "./dist/geometry/index.d.ts",
+      "import": "./dist/geometry.js"
     }
   },
   "scripts": {

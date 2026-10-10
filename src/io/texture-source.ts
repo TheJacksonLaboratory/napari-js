@@ -69,7 +69,11 @@ export interface TiledSource {
   readonly depth: number;
   readonly channels: 1 | 4;
   readonly dtype: PixelDtype;
-  fetchTile(key: TileKey): Promise<PixelChunk>;
+  /**
+   * Fetch one tile. `signal` is passed by callers that can be cancelled (e.g. {@link readLevel}
+   * with an `AbortSignal`), so an implementation can forward it to `fetch`; ignoring it is fine.
+   */
+  fetchTile(key: TileKey, signal?: AbortSignal): Promise<PixelChunk>;
 }
 
 export type TextureSource = TypedImageSource | ExternalImageSource | TiledSource;

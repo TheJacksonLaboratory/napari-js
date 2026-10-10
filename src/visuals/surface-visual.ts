@@ -5,11 +5,50 @@ import { DEPTH_FORMAT, type LayerVisual, type RenderView } from './layer-visual'
 import { buildLut, LUT_SIZE } from '../color/lut';
 import { SURFACE_SHADER } from './surface-shader';
 import { blendStateFor } from './blend';
+import type { Camera3D } from '../camera/camera3d';
 
 const VERTEX_STRIDE = SURFACE_VERTEX_FLOATS * 4; // [x,y,z,value] → 16 bytes
-const UNIFORM_FLOATS = 28; // mat4(16) + params vec4 + light vec4 + flags vec4
-const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
+/** mat4(16) + params vec4 + light vec4 + flags vec4. */
+export const SURFACE_UNIFORM_FLOATS = 28;
+const UNIFORM_BYTES = SURFACE_UNIFORM_FLOATS * 4;
 const AMBIENT = 0.35;
+
+/**
+ * Pack the per-frame uniforms (layout in surface-shader.ts) into `out`. Pure, so the packing —
+ * the window, the flags, the headlight — is testable without a device.
+ */
+export function packSurfaceUniforms(
+  out: Float32Array,
+  layer: SurfaceLayer,
+  camera: Camera3D,
+  vw: number,
+  vh: number,
+): void {
+  out.set(camera.viewProjection(vw, vh), 0);
+  const [lo, hi] = layer.contrastLimits;
+  out[16] = lo;
+  out[17] = hi;
+  out[18] = layer.gamma;
+  out[19] = layer.opacity;
+  // Headlight: light from the camera toward the scene, so the mesh is lit from the viewer side.
+  const eye = camera.eye();
+  const t = camera.target;
+  let lx = eye[0] - t[0];
+  let ly = eye[1] - t[1];
+  let lz = eye[2] - t[2];
+  const ll = Math.hypot(lx, ly, lz) || 1;
+  lx /= ll;
+  ly /= ll;
+  lz /= ll;
+  out[20] = lx;
+  out[21] = ly;
+  out[22] = lz;
+  out[23] = AMBIENT;
+  out[24] = layer.wireframe ? 1 : 0;
+  out[25] = layer.invert ? 1 : 0;
+  out[26] = 0;
+  out[27] = 0;
+}
 
 /**
  * Renders a {@link SurfaceLayer} as an indexed triangle mesh (see surface-shader.ts). Uploads the
@@ -22,7 +61,7 @@ export class SurfaceVisual implements LayerVisual {
 
   private readonly module: GPUShaderModule;
   private readonly uniformBuffer: GPUBuffer;
-  private readonly scratch = new Float32Array(UNIFORM_FLOATS);
+  private readonly scratch = new Float32Array(SURFACE_UNIFORM_FLOATS);
   private readonly vertexBuffer: GPUBuffer;
   private readonly indexBuffer: GPUBuffer;
   private readonly edgeBuffer: GPUBuffer;
@@ -159,32 +198,8 @@ export class SurfaceVisual implements LayerVisual {
     const wireframe = this.layer.wireframe;
     const count = wireframe ? this.edgeCount : this.indexCount;
     if (count === 0) return;
-    const s = this.scratch;
-    s.set(view.camera3d.viewProjection(view.vw, view.vh), 0);
-    const [lo, hi] = this.layer.contrastLimits;
-    s[16] = lo;
-    s[17] = hi;
-    s[18] = this.layer.gamma;
-    s[19] = this.layer.opacity;
-    // Headlight: light from the camera toward the scene, so the mesh is lit from the viewer side.
-    const eye = view.camera3d.eye();
-    const t = view.camera3d.target;
-    let lx = eye[0] - t[0];
-    let ly = eye[1] - t[1];
-    let lz = eye[2] - t[2];
-    const ll = Math.hypot(lx, ly, lz) || 1;
-    lx /= ll;
-    ly /= ll;
-    lz /= ll;
-    s[20] = lx;
-    s[21] = ly;
-    s[22] = lz;
-    s[23] = AMBIENT;
-    s[24] = wireframe ? 1 : 0;
-    s[25] = 0;
-    s[26] = 0;
-    s[27] = 0;
-    this.device.queue.writeBuffer(this.uniformBuffer, 0, s);
+    packSurfaceUniforms(this.scratch, this.layer, view.camera3d, view.vw, view.vh);
+    this.device.queue.writeBuffer(this.uniformBuffer, 0, this.scratch);
 
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this.bindGroup);

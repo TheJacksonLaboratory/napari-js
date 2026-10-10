@@ -1,16 +1,23 @@
+import { WINDOW_EPSILON } from '../color/display-pipeline';
+
 // 3D scatter: instanced screen-facing billboards at 3D positions, sized in screen pixels, with an
-// antialiased disc SDF and per-point value → windowed → gamma → colormap LUT. Depth is written at
+// antialiased disc SDF and per-point value → windowed → invert → gamma → colormap LUT. Depth is written at
 // the point's center depth so points occlude correctly under the orbit camera. Premultiplied output.
 //
 // Each instance also carries a per-point alpha and size multiplier. Both default to 1 on the CPU
 // side, so a layer that sets neither renders exactly as it did before they existed — but with them
 // a host can mute or enlarge a subset in ONE layer, instead of splitting the cloud into two draws
 // that then depth-sort against each other.
+//
+// Optionally each instance carries its own RGBA too (flags.x = 1). It then replaces the LUT colour
+// outright, and its alpha multiplies with the per-point alpha and the layer opacity. Without it the
+// colour buffer is a single element read with stride 0 and flags.x = 0 — the LUT path, unchanged.
 export const POINTS3D_SHADER = /* wgsl */ `
 struct U {
   mvp : mat4x4<f32>,
   params : vec4<f32>,   // viewportW, viewportH, sizePx, opacity
   window : vec4<f32>,   // lo, hi, gamma, 0
+  flags : vec4<f32>,    // perPointColor, invert, 0, 0
 };
 @group(0) @binding(0) var<uniform> u : U;
 @group(0) @binding(1) var lutSampler : sampler;
@@ -21,6 +28,7 @@ struct VSOut {
   @location(0) local : vec2<f32>,
   @location(1) value : f32,
   @location(2) alpha : f32,
+  @location(3) color : vec4<f32>,
 };
 
 @vertex
@@ -30,6 +38,7 @@ fn vs(
   @location(1) value : f32,
   @location(2) alpha : f32,
   @location(3) sizeScale : f32,
+  @location(4) color : vec4<f32>,
 ) -> VSOut {
   var corners = array<vec2<f32>, 6>(
     vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0),
@@ -47,6 +56,7 @@ fn vs(
   out.local = c;
   out.value = value;
   out.alpha = alpha;
+  out.color = color;
   return out;
 }
 
@@ -59,13 +69,21 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
 
   let lo = u.window.x;
   let hi = u.window.y;
-  let t = clamp((in.value - lo) / max(hi - lo, 1e-6), 0.0, 1.0);
+  // window → invert → gamma, the order of windowGamma() and the image shader, with its
+  // epsilon too, so colorAt() returns the rendered colour even for a very narrow window.
+  var t = clamp((in.value - lo) / max(hi - lo, ${WINDOW_EPSILON}), 0.0, 1.0);
+  if (u.flags.y > 0.5) { t = 1.0 - t; }
   let g = pow(t, u.window.z);
-  let rgb = textureSample(lut, lutSampler, vec2<f32>(g, 0.5)).rgb;
+  let mapped = textureSample(lut, lutSampler, vec2<f32>(g, 0.5)).rgb;
+
+  // A per-point colour wins over the LUT; its alpha joins the product below.
+  let own = u.flags.x > 0.5;
+  let rgb = select(mapped, in.color.rgb, own);
+  let ownAlpha = select(1.0, clamp(in.color.a, 0.0, 1.0), own);
 
   // Per-point alpha MULTIPLIES the layer opacity rather than replacing it, so the layer-wide
   // control still works on a cloud that also mutes a subset.
-  let a = inside * u.params.w * clamp(in.alpha, 0.0, 1.0);
+  let a = inside * u.params.w * clamp(in.alpha, 0.0, 1.0) * ownAlpha;
   if (a <= 0.0) { discard; }            // a fully muted point writes no depth over its neighbours
   return vec4<f32>(rgb * a, a);         // premultiplied
 }

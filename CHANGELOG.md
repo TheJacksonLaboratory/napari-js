@@ -3,6 +3,116 @@
 All notable changes to napari-js are documented here. The format roughly follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`LayerList.move(layer, index)` and `LayerList.insert(index, layer)`** (napari's
+  `LayerList.move`/`insert`). Restacking by remove + re-add disposes the layer's GPU visual and
+  re-uploads its whole buffer on the next frame; `move` only reorders `items`, emitting `moved`
+  and `changed` but never `removed`/`added`, so the renderer keeps the visual it already has.
+
+- **Packed per-point colours.** `PointsLayer` `faceColor`/`borderColor` accept a `Float32Array` of
+  RGBA (length 4N), copied straight into the instance buffer instead of via N tuples.
+  `Points3DLayer` gains `colors` (option + setter, same packing): when set it wins over
+  `values` + `colormap`, its alpha multiplies `alphas`, and it moves only the style clock.
+  `Points3DLayer.colorAt(i)` is the CPU reference for that combination. Wrong lengths throw.
+
+- **`invert` on `VolumeLayer`, `SurfaceLayer` and `Points3DLayer`** (option + live setter), and on
+  `VolumeChannel`/`VolumeChannelUpdate`, with `ImageLayer`'s order: window → invert → gamma →
+  colormap. Replaces reversing the colormap, which differs once gamma ≠ 1. On a volume only the
+  colour inverts; the MIP maximum, translucent alpha and iso threshold use the un-inverted value.
+
+- **`Camera3D.worldPerPixel(viewportHeight)`**: world units per CSS pixel at the target's depth,
+  `2 · distance · tan(fov / 2) / viewportHeight` — the 3D analog of `1 / zoom`, for a scale bar.
+  `pan` now uses it instead of inlining the formula; its behaviour is unchanged.
+
+- **`napari-js/testing`**, a GPU-free test double: the whole public API with `Viewer` bound to
+  `HeadlessViewer` — the real model, layers, `add*`, framing and canvas maths, no device, readback
+  a blank frame. Replaces hand-written stubs that drift from the library. `Viewer`'s GPU-free half
+  moved into a shared `ViewerBase`, so the two cannot diverge; the main bundle is still one file.
+
+- **Per-point marker symbols.** `PointSymbol` grows to napari's set (`diamond`, `star`, `cross`,
+  `x`, `triangle_up`/`_down`, `arrow`, `tailed_arrow`, `hbar`, `vbar`, `clobber`) plus `hexagon` and
+  `pentagon`; napari aliases (`'o'`, `'+'`, `'^'`, …) resolve. `PointsLayer.symbols` takes one code
+  per point (`Uint8Array`, `pointSymbolCode(name)`; 255 = the layer `symbol`), drawn as SDFs with
+  the existing border. `pointSymbolDistance` is the CPU reference. `borderWidth` is now a uniform.
+
+- **Per-shape colours on `ShapesLayer`**: `faceColor` (option + setter), napari Shapes'
+  `face_color` — one RGBA or a packed `Float32Array(4 · shapeCount)`. When set it wins over
+  `values` + `colormap`; null restores them. Uploaded per shape (a storage buffer), so a recolour
+  re-expands nothing. `colorAt(i)` / `colorMode()` are the CPU reference.
+
+- **Alpha in colormaps, and `ImageLayer.transparentBelow`.** `ColorStop.color` may be RGBA
+  (alpha interpolated, `Colormap.sampleRGBA`, carried in the LUT); a scalar image multiplies it
+  into its alpha. `transparentBelow` (option + setter, a uniform) draws values ≤ the low contrast
+  limit fully transparent, so a density map recolours on a `contrastLimits` change without a
+  re-upload. `mapScalarRGBA` is the CPU reference. Other colormapped layers still use RGB only.
+
+- **Picking.** `GridIndex`, a bucket grid over any 2D coordinate set (`ScreenIndex` now builds on
+  it). `PointsLayer.pick(worldX, worldY, { tolerance, radiusAt, pickable, tieBreak })` — napari's
+  `get_value`: `'topmost'` (default, last drawn) or `'nearest'`, over a lazily built index rebuilt
+  on `dataVersion`. `PointPicker(viewer, points3d, { maxReach })` owns the 3D policy: lazy
+  re-projection on camera / data / resize into reused buffers, the screen index, layer-style
+  radii and muting. `Viewer.viewportSize()` gives the canvas size in CSS px.
+
+- **`Viewer.canvasTransform()` and `worldToCanvasLocal(x, y)`** (on `ViewerBase`, so also
+  `HeadlessViewer`): the 2D camera's world → canvas-local CSS-px affine `[a, b, c, d, e, f]` and
+  its point form, with no `getBoundingClientRect()` read. An SVG overlay sets one
+  `matrix(...)` per camera change instead of a layout read per vertex.
+
+- **`visibleTiles(..., scales, { order, limit })`**: `order: 'center-out'` lists the tiles nearest
+  the view's centre first (ties row-major) so a streaming consumer fills the middle of the screen
+  first; `limit` keeps the first N after ordering. Without options the list is unchanged.
+
+- **Whole-level reads from a `TiledSource`**: `readLevel(source, z, opts)` picks the finest level
+  within `maxTiles`/`maxTextureDim` (`chooseStitchLevel`, on `selectLevel`/`tileGrid`), stitches it
+  with bounded concurrency and box-downscales to `maxSide`; `assembleVolume` stacks z-slices into a
+  uint8 volume with progress; `bitmapToScalar`/`rgbaToScalar` decode images. All cancel via
+  `AbortSignal`, which is also passed to `fetchTile(key, signal?)`.
+
+- **`napari-js/overlays`**: `ScaleBarOverlay` (2D zoom or the 3D camera's `worldPerPixel`),
+  `AxesLabelsOverlay` (projected 3D axis text) and `NavigatorOverlay` (minimap on
+  `visibleWorldRect`), each `(host, viewer, opts)` with `dispose()`. The pure `scaleBarFor` snaps
+  to the nearest 1/2/5 × 10ⁿ and `formatLength` picks the unit. A second entry, like `testing`.
+
+- **`napari-js/colormaps`**: all 83 matplotlib colormaps as exact 256-entry tables, one
+  tree-shakeable `Uint8Array(768)` export each (base64 in source), plus `COLORMAP_LUTS`,
+  `matplotlibColormap(name)` and `lutColormap(name, lut)` (also in the main entry). Licences are
+  noted in `src/colormaps/luts.ts`.
+
+- **`INFERNO`** colormap (`'inferno'` by name).
+
+- **`napari-js/geometry`**: `rasterizePolygon` (scanline, pixel-centre rule, holes),
+  `pointInRing`/`pointInPolygonWithHoles`/`ringArea`, `labelComponents` (4/8-connected, by value),
+  `traceContours` (outer rings + holes along pixel edges, unclamped `origin`; exact round trip with
+  `rasterizePolygon`) and `floodFill`. Ported and generalised from SIV's wand service.
+
+- **`autoContrastLimits(histogram, saturation)`**: saturation-based auto contrast that clips a
+  fraction at each end and ignores a dominant padding bin. In the main entry and `geometry`.
+
+- **`parseColor(css): RGBA | null`** (napari's `transform_color` for one colour): `#rgb`, `#rgba`,
+  `#rrggbb`, `#rrggbbaa`, `rgb()`/`rgba()` (comma, space or slash syntax, percentages) and the basic
+  named colours, including matplotlib's `r g b c m y k w`. Null when unparseable, so each caller
+  picks its fallback.
+
+- **`LruCache<V, K = string>`**: the key type is generic (numbers, objects by identity…), so
+  numeric-keyed caches can use it too. `V` stays first, so `LruCache<V>` is unchanged.
+
+### Changed
+
+- **`addVolume` frames like the other 3D adders**: on `layer.bounds()` through `framingFor` (field
+  of view and canvas aspect), not `Camera3D.frame`'s `max(w, h, d) × 1.8`. Same target (the
+  origin); the distance now fits the box's half-diagonal, so the camera sits further back
+  (about 26% for a cube on a landscape canvas) and a portrait canvas no longer clips.
+
+- **`VIRIDIS` and `MAGMA` are matplotlib's exact 256-entry tables**, not 6-anchor approximations.
+  Costs the main bundle about 3 kB gzip (with `INFERNO`).
+
+- **`tintColormap` parses with `parseColor`**, so it also takes `rgb()` and named colours. Bare hex
+  without `#` still works; a partly invalid hex now gives black as a whole rather than per channel,
+  and the name is always lower-case `tint-rrggbb`.
+
 ## [0.13.0]
 
 ### Added

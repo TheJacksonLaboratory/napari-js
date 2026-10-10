@@ -1,14 +1,33 @@
 import type { VolumeLayer } from '../layers/volume-layer';
 import type { BlendMode } from '../layers/layer';
 import { DEPTH_FORMAT, type LayerVisual, type RenderView } from './layer-visual';
-import { multiply, scale3d, translate3d, invert } from '../math/mat4';
+import { multiply, scale3d, translate3d, invert, type Mat4 } from '../math/mat4';
 import { buildLut, LUT_SIZE } from '../color/lut';
 import { VOLUME_SHADER } from './volume-shader';
 import { blendStateFor } from './blend';
 
-const UNIFORM_FLOATS = 24; // mat4(16) + vec4 params + vec4 params2
-const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
+/** mat4(16) + vec4 params + vec4 params2. */
+export const VOLUME_UNIFORM_FLOATS = 24;
+const UNIFORM_BYTES = VOLUME_UNIFORM_FLOATS * 4;
 const STEPS = 192;
+
+/**
+ * Pack the per-frame uniforms (layout in volume-shader.ts) into `out`. Pure, so the packing —
+ * the normalized window, the mode and the flags — is testable without a device.
+ */
+export function packVolumeUniforms(out: Float32Array, layer: VolumeLayer, invMvp: Mat4): void {
+  out.set(invMvp, 0);
+  // The texture is r8unorm, so the shader sees samples in 0..1: normalize the window to match.
+  const [lo, hi] = layer.contrastLimits;
+  out[16] = lo / 255;
+  out[17] = hi / 255;
+  out[18] = layer.gamma;
+  out[19] = layer.opacity;
+  out[20] = layer.renderingCode();
+  out[21] = layer.isoThreshold;
+  out[22] = STEPS;
+  out[23] = layer.invert ? 1 : 0;
+}
 
 /**
  * Renders a {@link VolumeLayer} by fragment raymarching a 3D texture (see volume-shader.ts).
@@ -20,7 +39,7 @@ export class VolumeVisual implements LayerVisual {
 
   private readonly module: GPUShaderModule;
   private readonly uniformBuffer: GPUBuffer;
-  private readonly scratch = new Float32Array(UNIFORM_FLOATS);
+  private readonly scratch = new Float32Array(VOLUME_UNIFORM_FLOATS);
   private readonly texture: GPUTexture;
   private readonly lutTexture: GPUTexture;
   private readonly volSampler: GPUSampler;
@@ -152,18 +171,8 @@ export class VolumeVisual implements LayerVisual {
     const mvp = multiply(view.camera3d.viewProjection(view.vw, view.vh), this.model);
     const invMvp = invert(mvp);
 
-    const s = this.scratch;
-    s.set(invMvp, 0);
-    const [lo, hi] = this.layer.contrastLimits;
-    s[16] = lo / 255;
-    s[17] = hi / 255;
-    s[18] = this.layer.gamma;
-    s[19] = this.layer.opacity;
-    s[20] = this.layer.renderingCode();
-    s[21] = this.layer.isoThreshold;
-    s[22] = STEPS;
-    s[23] = 0;
-    this.device.queue.writeBuffer(this.uniformBuffer, 0, s);
+    packVolumeUniforms(this.scratch, this.layer, invMvp);
+    this.device.queue.writeBuffer(this.uniformBuffer, 0, this.scratch);
 
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this.bindGroup);

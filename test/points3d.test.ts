@@ -4,6 +4,10 @@ import {
   POINTS3D_DATA_FLOATS,
   POINTS3D_STYLE_FLOATS,
 } from '../src/layers/points3d-layer';
+import { packPoints3DUniforms, POINTS3D_UNIFORM_FLOATS } from '../src/visuals/points3d-visual';
+import { mapScalar } from '../src/color/display-pipeline';
+import { resolveColormap } from '../src/color/colormap';
+import { identity } from '../src/math/mat4';
 
 const POS = new Float32Array([0, 0, 0, 2, 0, 0, 2, 4, 6]);
 const VALS = new Float32Array([10, 20, 30]);
@@ -230,6 +234,89 @@ describe('Points3DLayer', () => {
       p.values = new Float32Array([7, 8, 9]);
       expect(p.dataVersion).toBe(before + 1);
       expect(p.buildInstanceData()[3]).toBe(7);
+    });
+  });
+
+  /**
+   * Per-point RGBA, which is how categorical colour gets in without a stepped LUT.
+   */
+  describe('per-point colors', () => {
+    // f32-exact so assertions are about the combination, not rounding.
+    const COLORS = new Float32Array([1, 0, 0, 1, 0, 1, 0, 0.5, 0, 0, 1, 0.25]);
+
+    it('wins over values + colormap, with its alpha times alphas', () => {
+      const p = new Points3DLayer(POS, VALS, {
+        colors: COLORS,
+        alphas: new Float32Array([1, 0.5, 2]), // 2 clamps to 1, as in the shader
+        colormap: 'magma',
+      });
+      expect(p.colorAt(0)).toEqual([1, 0, 0, 1]);
+      expect(p.colorAt(1)).toEqual([0, 1, 0, 0.25]);
+      expect(p.colorAt(2)).toEqual([0, 0, 1, 0.25]);
+    });
+
+    it('falls back to the colormap path when unset (alpha = alphas)', () => {
+      const p = new Points3DLayer(POS, VALS, { alphas: new Float32Array([1, 0.5, 0.25]) });
+      expect(p.colors).toBeNull();
+      const want = mapScalar(20, {
+        climLo: 10,
+        climHi: 30,
+        gamma: 1,
+        invert: false,
+        colormap: resolveColormap('viridis'),
+      });
+      expect(p.colorAt(1)).toEqual([...want, 0.5]);
+    });
+
+    it('rejects a packed array that is not 4 floats per point', () => {
+      expect(() => new Points3DLayer(POS, VALS, { colors: new Float32Array(3) })).toThrow(
+        /colors length \(3\) must equal 4 × point count \(12\)/,
+      );
+      const p = new Points3DLayer(POS, VALS);
+      expect(() => {
+        p.colors = new Float32Array(16);
+      }).toThrow(/colors/);
+      expect(p.colors).toBeNull();
+    });
+
+    it('moves the style clock (and its own), never the data clock', () => {
+      const p = new Points3DLayer(POS, VALS);
+      let emitted = 0;
+      p.changed.connect(() => emitted++);
+      const { dataVersion, styleVersion, colorsVersion } = p;
+      p.colors = COLORS;
+      expect(p.colors).toBe(COLORS);
+      expect(p.styleVersion).toBe(styleVersion + 1);
+      expect(p.colorsVersion).toBe(colorsVersion + 1);
+      expect(p.dataVersion).toBe(dataVersion);
+      expect(emitted).toBe(1);
+      // A selection click (alphas) does not touch the colours counter, so the visual does not
+      // re-upload the colours with it.
+      p.alphas = new Float32Array([1, 0, 0]);
+      expect(p.colorsVersion).toBe(colorsVersion + 1);
+      p.colors = null;
+      expect(p.colors).toBeNull();
+      expect(p.colorsVersion).toBe(colorsVersion + 2);
+    });
+
+    it('leaves the static and style buffers exactly as they were', () => {
+      const plain = new Points3DLayer(POS, VALS);
+      const colored = new Points3DLayer(POS, VALS, { colors: COLORS });
+      expect(Array.from(colored.buildInstanceData())).toEqual(
+        Array.from(plain.buildInstanceData()),
+      );
+      expect(Array.from(colored.buildStyleData())).toEqual(Array.from(plain.buildStyleData()));
+    });
+
+    it('flags per-point colour in the uniforms only when colours are set', () => {
+      const out = new Float32Array(POINTS3D_UNIFORM_FLOATS);
+      const p = new Points3DLayer(POS, VALS, { size: 9, gamma: 2 });
+      packPoints3DUniforms(out, p, identity(), 640, 480);
+      expect(Array.from(out.subarray(16, 24))).toEqual([640, 480, 9, 1, 10, 30, 2, 0]);
+      expect(out[24]).toBe(0);
+      p.colors = COLORS;
+      packPoints3DUniforms(out, p, identity(), 640, 480);
+      expect(out[24]).toBe(1);
     });
   });
 });

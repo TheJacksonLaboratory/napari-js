@@ -12,6 +12,12 @@ export interface VolumeLayerOptions {
   /** Normalization window in source-data units (default [0,255] for uint8). */
   contrastLimits?: [number, number];
   gamma?: number;
+  /**
+   * Invert the colour mapping (window → invert → gamma → colormap), as {@link ImageLayerOptions.invert}.
+   * Colour only: the raymarch still projects, accumulates and thresholds the un-inverted
+   * windowed value, so empty space stays empty. See {@link VolumeLayer.invert}.
+   */
+  invert?: boolean;
   rendering?: VolumeRendering;
   /** Iso threshold as a windowed value 0..1 (iso mode). */
   isoThreshold?: number;
@@ -47,6 +53,7 @@ export class VolumeLayer extends Layer {
   private _colormap: Colormap;
   private _contrastLimits: [number, number];
   private _gamma: number;
+  private _invert: boolean;
   private _rendering: VolumeRendering;
   private _isoThreshold: number;
 
@@ -70,6 +77,7 @@ export class VolumeLayer extends Layer {
     this._colormap = resolveColormap(opts.colormap ?? 'viridis');
     this._contrastLimits = opts.contrastLimits ?? [0, 255];
     this._gamma = opts.gamma ?? 1;
+    this._invert = opts.invert ?? false;
     this._rendering = opts.rendering ?? 'mip';
     this._isoThreshold = opts.isoThreshold ?? 0.5;
     this._blending = opts.blending ?? 'translucent';
@@ -132,6 +140,24 @@ export class VolumeLayer extends Layer {
   }
   set gamma(value: number) {
     this._gamma = value > 0 ? value : this._gamma;
+    this.changed.emit(this);
+  }
+
+  /**
+   * Invert the colour mapping: a sample's colour is `colormap(windowGamma(v, lo, hi, gamma,
+   * invert))`, the same order as {@link ImageLayer.invert} (window → invert → gamma).
+   *
+   * Only the COLOUR is inverted. Which voxel a MIP ray picks, how much a translucent sample
+   * occludes, and where the iso surface sits all still follow the un-inverted windowed value —
+   * inverting those would turn the empty space around an object into the brightest, most opaque
+   * thing in the volume. So an inverted MIP shows the same brightest voxel, coloured from the
+   * other end of the colormap.
+   */
+  get invert(): boolean {
+    return this._invert;
+  }
+  set invert(value: boolean) {
+    this._invert = value;
     this.changed.emit(this);
   }
 
