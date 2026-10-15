@@ -53,6 +53,7 @@ export { VolumeLayer } from './layers/volume-layer';
 export type { VolumeLayerOptions, VolumeRendering } from './layers/volume-layer';
 export {
   clipRayRange,
+  clipRayRangeByPlanes,
   defaultVolumePlane,
   halfSpace,
   normalizeVolumePlane,

@@ -41,11 +41,14 @@ export function packVolumeUniforms(out: Float32Array, layer: VolumeLayer, invMvp
   const plane = layer.plane;
   out.set(halfSpace(plane), 28);
   // plane2: half the slab's thickness (voxels), the clipping plane count, unused.
+  const clipping = layer.clippingPlanes;
   out[32] = (plane.thickness ?? 1) / 2;
-  out[33] = 0;
+  out[33] = clipping.length;
   out[34] = 0;
   out[35] = 0;
+  // clip: each clipping plane as a half-space, the rest zero.
   out.fill(0, 36, VOLUME_UNIFORM_FLOATS);
+  clipping.forEach((p, i) => out.set(halfSpace(p), 36 + 4 * i));
 }
 
 /**

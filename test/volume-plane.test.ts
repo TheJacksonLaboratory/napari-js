@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { VolumeLayer } from '../src/layers/volume-layer';
+import { MAX_CLIPPING_PLANES } from '../src/layers/clipping';
 import {
   clipRayRange,
+  clipRayRangeByPlanes,
   halfSpace,
   normalizeVolumePlane,
   planeSlabContains,
@@ -186,5 +188,73 @@ describe('MultiChannelVolumeView plane', () => {
     expect(h.added).toBe(2);
     // Kept for the next render.
     expect(view.render('grayscale', [ch])[0].plane.position).toEqual([0, 2, 0]);
+  });
+});
+
+describe('volume clipping planes', () => {
+  it('narrows a ray by every enabled plane', () => {
+    // A ray along +z from z = −1 to z = 9: keep 2 ≤ z ≤ 6 → t in [0.3, 0.7]; an off plane clips nothing.
+    const r = clipRayRangeByPlanes(
+      [0, 1],
+      [0, 0, -1],
+      [0, 0, 10],
+      [
+        { position: [0, 0, 2], normal: [0, 0, 1] },
+        { position: [0, 0, 6], normal: [0, 0, -1] },
+        { position: [0, 0, 100], normal: [0, 0, 1], enabled: false },
+      ],
+    );
+    expect(r[0]).toBeCloseTo(0.3, 9);
+    expect(r[1]).toBeCloseTo(0.7, 9);
+  });
+
+  it('keeps enabled planes with unit normals, live, and refuses too many', () => {
+    const layer = new VolumeLayer(DATA, W, H, D, {
+      clippingPlanes: [
+        { position: [0, 0, 1], normal: [0, 0, 5] },
+        { position: [0, 0, 0], normal: [1, 0, 0], enabled: false },
+      ],
+    });
+    expect(layer.clippingPlanes).toEqual([{ position: [0, 0, 1], normal: [0, 0, 1] }]);
+    let n = 0;
+    layer.changed.connect(() => n++);
+    layer.clippingPlanes = [];
+    expect(n).toBe(1);
+    expect(layer.clippingPlanes).toEqual([]);
+    const many = Array.from({ length: MAX_CLIPPING_PLANES + 1 }, () => ({
+      position: [0, 0, 0] as V3,
+      normal: [0, 0, 1] as V3,
+    }));
+    expect(() => (layer.clippingPlanes = many)).toThrow();
+  });
+
+  it('packs the count and each plane as a half-space, the unused slots zero', () => {
+    const out = new Float32Array(VOLUME_UNIFORM_FLOATS).fill(7);
+    const layer = new VolumeLayer(DATA, W, H, D, {
+      clippingPlanes: [
+        { position: [0, 0, 1], normal: [0, 0, 2] },
+        { position: [2, 0, 0], normal: [-1, 0, 0] },
+      ],
+    });
+    packVolumeUniforms(out, layer, identity());
+    expect(out[33]).toBe(2);
+    expect(Array.from(out.subarray(36, 44))).toEqual([0, 0, 1, -1, -1, 0, 0, 2]);
+    expect(Array.from(out.subarray(44))).toEqual(new Array(16).fill(0));
+  });
+
+  it('MultiChannelVolumeView clips every channel, live and for the next render', () => {
+    const view = new MultiChannelVolumeView({
+      addVolume: (data, w, h, d, opts) => new VolumeLayer(data, w, h, d, opts),
+      layers: { clear() {} },
+      requestRender() {},
+    });
+    const ch = { data: DATA, width: W, height: H, depth: D };
+    const plane = { position: [0, 0, 1] as V3, normal: [0, 0, 1] as V3 };
+    const layers = view.render('multichannel', [ch, ch], { clippingPlanes: [plane] });
+    expect(layers.map((l) => l.clippingPlanes.length)).toEqual([1, 1]);
+    view.setClippingPlanes([]);
+    expect(layers.map((l) => l.clippingPlanes.length)).toEqual([0, 0]);
+    view.setClippingPlanes([plane]);
+    expect(view.render('grayscale', [ch])[0].clippingPlanes).toEqual([plane]);
   });
 });

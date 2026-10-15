@@ -1,6 +1,7 @@
 import type { SurfaceBounds } from './surface-layer';
 import { Layer, type BlendMode, type Fit3D } from './layer';
 import { Colormap, resolveColormap } from '../color/colormap';
+import { normalizeClippingPlanes, type ClippingPlane } from './clipping';
 import {
   defaultVolumePlane,
   normalizeVolumePlane,
@@ -45,6 +46,9 @@ export interface VolumeLayerOptions {
   /** The plane a `'plane'` depiction shows, in data (voxel) coordinates. Default: normal +z through
    *  the middle of the volume, one voxel thick. */
   plane?: VolumePlane;
+  /** Planes that cut the volume away (data coordinates; at most {@link MAX_CLIPPING_PLANES}). See
+   *  {@link VolumeLayer.clippingPlanes}. */
+  clippingPlanes?: readonly ClippingPlane[];
 }
 
 /**
@@ -73,6 +77,7 @@ export class VolumeLayer extends Layer {
   private _isoThreshold: number;
   private _depiction: VolumeDepiction;
   private _plane: NormalizedVolumePlane;
+  private _clippingPlanes: ClippingPlane[];
 
   constructor(
     data: Uint8Array,
@@ -101,6 +106,7 @@ export class VolumeLayer extends Layer {
     this._plane = opts.plane
       ? normalizeVolumePlane(opts.plane)
       : defaultVolumePlane(width, height, depth);
+    this._clippingPlanes = normalizeClippingPlanes(opts.clippingPlanes ?? []);
     this._blending = opts.blending ?? 'translucent';
     if (opts.opacity !== undefined) this._opacity = opts.opacity;
     if (opts.visible !== undefined) this._visible = opts.visible;
@@ -216,6 +222,21 @@ export class VolumeLayer extends Layer {
   }
   set plane(value: VolumePlane) {
     this._plane = normalizeVolumePlane(value);
+    this.changed.emit(this);
+  }
+
+  /**
+   * Planes that cut the volume away, napari's `experimental_clipping_planes`: a sample at data
+   * point `p` is drawn only where `dot(p − position, normal) ≥ 0` for every enabled plane (see
+   * {@link insideClippingPlanes}). They apply under every rendering mode and to a `'plane'`
+   * depiction too. Kept enabled-only with unit normals; more than {@link MAX_CLIPPING_PLANES}
+   * throws. Live: only uniforms change.
+   */
+  get clippingPlanes(): ClippingPlane[] {
+    return this._clippingPlanes.map((p) => ({ position: [...p.position], normal: [...p.normal] }));
+  }
+  set clippingPlanes(value: readonly ClippingPlane[]) {
+    this._clippingPlanes = normalizeClippingPlanes(value);
     this.changed.emit(this);
   }
 

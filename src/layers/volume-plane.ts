@@ -1,3 +1,5 @@
+import type { ClippingPlane } from './clipping';
+
 /** How a volume is drawn (napari's `depiction`): the whole volume, or only a plane through it. */
 export type VolumeDepiction = 'volume' | 'plane';
 
@@ -99,6 +101,21 @@ export function clipRayRange(
   if (Math.abs(b) < 1e-9) return a < 0 ? [1, 0] : [range[0], range[1]];
   const t = -a / b;
   return b > 0 ? [Math.max(range[0], t), range[1]] : [range[0], Math.min(range[1], t)];
+}
+
+/** The ray range left by every clipping plane (see {@link clipRayRange}). */
+export function clipRayRangeByPlanes(
+  range: readonly [number, number],
+  origin: readonly [number, number, number],
+  dir: readonly [number, number, number],
+  planes: readonly ClippingPlane[],
+): [number, number] {
+  let r: [number, number] = [range[0], range[1]];
+  for (const p of planes) {
+    if (p.enabled === false) continue;
+    r = clipRayRange(r, origin, dir, halfSpace(p));
+  }
+  return r;
 }
 
 /** A 2D image of voxel values, row by row. */

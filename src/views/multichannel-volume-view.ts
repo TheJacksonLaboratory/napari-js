@@ -2,6 +2,7 @@ import { VolumeLayer, type VolumeLayerOptions, type VolumeRendering } from '../l
 import type { BlendMode } from '../layers/layer';
 import { Colormap, tintColormap } from '../color/colormap';
 import type { VolumeDepiction, VolumePlane } from '../layers/volume-plane';
+import type { ClippingPlane } from '../layers/clipping';
 
 /** How a multichannel volume is composited. */
 export type VolumeMode =
@@ -44,6 +45,8 @@ export interface MultiChannelVolumeRenderOptions {
   depiction?: VolumeDepiction;
   /** The plane a `'plane'` depiction shows, shared by every channel (data coordinates). */
   plane?: VolumePlane;
+  /** Clipping planes shared by every channel (data coordinates). Kept across renders until changed. */
+  clippingPlanes?: readonly ClippingPlane[];
 }
 
 /** The slice of {@link Viewer} this view drives — satisfied by `Viewer`, trivial to fake in tests. */
@@ -76,6 +79,7 @@ export class MultiChannelVolumeView {
   private _rendering: VolumeRendering = 'mip';
   private _depiction: VolumeDepiction = 'volume';
   private _plane: VolumePlane | null = null;
+  private _clippingPlanes: readonly ClippingPlane[] = [];
 
   constructor(private readonly host: VolumeHost) {}
 
@@ -106,6 +110,7 @@ export class MultiChannelVolumeView {
     if (opts.rendering) this._rendering = opts.rendering;
     if (opts.depiction) this._depiction = opts.depiction;
     if (opts.plane) this._plane = opts.plane;
+    if (opts.clippingPlanes) this._clippingPlanes = opts.clippingPlanes;
     const rendering = this._rendering;
     this.host.layers.clear();
     this._layers.length = 0;
@@ -121,6 +126,7 @@ export class MultiChannelVolumeView {
         visible: ch.visible ?? true,
         rendering,
         depiction: this._depiction,
+        clippingPlanes: this._clippingPlanes,
         ...(this._plane ? { plane: this._plane } : {}),
         ...(ch.voxelSize ? { voxelSize: ch.voxelSize } : {}),
         ...(mode === 'multichannel' ? { blending: 'additive' as BlendMode } : {}),
@@ -166,6 +172,13 @@ export class MultiChannelVolumeView {
   setPlane(plane: VolumePlane): void {
     this._plane = plane;
     for (const layer of this._layers) layer.plane = plane;
+    this.host.requestRender();
+  }
+
+  /** Clip every channel by these planes (data coordinates; [] clips nothing). Live. */
+  setClippingPlanes(planes: readonly ClippingPlane[]): void {
+    this._clippingPlanes = planes;
+    for (const layer of this._layers) layer.clippingPlanes = planes;
     this.host.requestRender();
   }
 

@@ -113,6 +113,10 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
   );
   var steps = i32(u.params2.z);
 
+  for (var k = 0; k < i32(u.plane2.y); k = k + 1) {
+    range = keepHalfSpace(range, ro, rd, u.clip[k]);
+  }
+
   if (u.dims.w > 0.5) {
     let half = u.plane2.x;
     if (half > 0.5) {
