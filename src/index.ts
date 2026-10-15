@@ -3,6 +3,7 @@
 // Viewer + device
 export { Viewer } from './viewer';
 export type { ViewerOptions } from './viewer';
+export type { SurfacePick } from './viewer-base';
 export { acquireDevice, WebGPUUnsupportedError } from './engine/device';
 export type { DeviceContext, DeviceFeatures } from './engine/device';
 export type { PixelData } from './engine/readback';
@@ -73,6 +74,7 @@ export type {
   SurfaceLayerOptions,
   SurfaceBounds,
   HeightFieldOptions,
+  SurfaceColorMode,
 } from './layers/surface-layer';
 export { Points3DLayer } from './layers/points3d-layer';
 export type { Points3DLayerOptions } from './layers/points3d-layer';
@@ -93,6 +95,9 @@ export type { GridBounds, GridIndexOptions } from './picking/grid-index';
 export { PointPicker } from './picking/point-picker';
 export type { PointPickerHost, PointPickerOptions } from './picking/point-picker';
 export { projectPoint, projectPoints } from './picking/project';
+export { screenRay, rayHitBox, rayHitTriangles } from './picking/ray';
+export type { Ray, TriangleHit, RayHitTrianglesOptions } from './picking/ray';
+export { invertMat4 } from './math/mat4';
 export type { ProjectedPoint, ProjectedPoints } from './picking/project';
 export { unionBounds, resolveFit, framingFor, Fit3DState } from './scene/fit';
 export type { FramingView } from './scene/fit';
