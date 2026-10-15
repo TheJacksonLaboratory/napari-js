@@ -1,6 +1,14 @@
 import type { SurfaceBounds } from './surface-layer';
 import { Layer, type BlendMode, type Fit3D } from './layer';
 import { Colormap, resolveColormap } from '../color/colormap';
+import { normalizeClippingPlanes, type ClippingPlane } from './clipping';
+import {
+  defaultVolumePlane,
+  normalizeVolumePlane,
+  type NormalizedVolumePlane,
+  type VolumeDepiction,
+  type VolumePlane,
+} from './volume-plane';
 
 export type VolumeRendering = 'mip' | 'translucent' | 'iso';
 
@@ -30,6 +38,17 @@ export interface VolumeLayerOptions {
    * keeps its true proportions instead of the raw voxel-count aspect. Default `[1, 1, 1]`.
    */
   voxelSize?: readonly [number, number, number];
+  /**
+   * Draw the whole volume (`'volume'`, the default) or only {@link plane} through it (`'plane'`),
+   * as napari's `depiction`. See {@link VolumeLayer.depiction}.
+   */
+  depiction?: VolumeDepiction;
+  /** The plane a `'plane'` depiction shows, in data (voxel) coordinates. Default: normal +z through
+   *  the middle of the volume, one voxel thick. */
+  plane?: VolumePlane;
+  /** Planes that cut the volume away (data coordinates; at most {@link MAX_CLIPPING_PLANES}). See
+   *  {@link VolumeLayer.clippingPlanes}. */
+  clippingPlanes?: readonly ClippingPlane[];
 }
 
 /**
@@ -56,6 +75,9 @@ export class VolumeLayer extends Layer {
   private _invert: boolean;
   private _rendering: VolumeRendering;
   private _isoThreshold: number;
+  private _depiction: VolumeDepiction;
+  private _plane: NormalizedVolumePlane;
+  private _clippingPlanes: ClippingPlane[];
 
   constructor(
     data: Uint8Array,
@@ -80,6 +102,11 @@ export class VolumeLayer extends Layer {
     this._invert = opts.invert ?? false;
     this._rendering = opts.rendering ?? 'mip';
     this._isoThreshold = opts.isoThreshold ?? 0.5;
+    this._depiction = opts.depiction ?? 'volume';
+    this._plane = opts.plane
+      ? normalizeVolumePlane(opts.plane)
+      : defaultVolumePlane(width, height, depth);
+    this._clippingPlanes = normalizeClippingPlanes(opts.clippingPlanes ?? []);
     this._blending = opts.blending ?? 'translucent';
     if (opts.opacity !== undefined) this._opacity = opts.opacity;
     if (opts.visible !== undefined) this._visible = opts.visible;
@@ -171,6 +198,46 @@ export class VolumeLayer extends Layer {
 
   renderingCode(): number {
     return this._rendering === 'mip' ? 0 : this._rendering === 'translucent' ? 1 : 2;
+  }
+
+  /**
+   * `'plane'`: only {@link plane} is drawn, under the current {@link rendering} and with the layer's
+   * colour mapping — napari's plane depiction. A plane one voxel thick or thinner is sampled once
+   * where each ray crosses it, so an axis-aligned plane at an integer position shows exactly that
+   * slice (see {@link volumePlaneSlice}); a thicker one is marched across its slab. Live: only
+   * uniforms change, the volume texture is not uploaded again.
+   */
+  get depiction(): VolumeDepiction {
+    return this._depiction;
+  }
+  set depiction(value: VolumeDepiction) {
+    this._depiction = value;
+    this.changed.emit(this);
+  }
+
+  /** The plane a `'plane'` depiction shows (data coordinates, unit normal). Live, like {@link depiction}. */
+  get plane(): VolumePlane {
+    const p = this._plane;
+    return { position: [...p.position], normal: [...p.normal], thickness: p.thickness };
+  }
+  set plane(value: VolumePlane) {
+    this._plane = normalizeVolumePlane(value);
+    this.changed.emit(this);
+  }
+
+  /**
+   * Planes that cut the volume away, napari's `experimental_clipping_planes`: a sample at data
+   * point `p` is drawn only where `dot(p − position, normal) ≥ 0` for every enabled plane (see
+   * {@link insideClippingPlanes}). They apply under every rendering mode and to a `'plane'`
+   * depiction too. Kept enabled-only with unit normals; more than {@link MAX_CLIPPING_PLANES}
+   * throws. Live: only uniforms change.
+   */
+  get clippingPlanes(): ClippingPlane[] {
+    return this._clippingPlanes.map((p) => ({ position: [...p.position], normal: [...p.normal] }));
+  }
+  set clippingPlanes(value: readonly ClippingPlane[]) {
+    this._clippingPlanes = normalizeClippingPlanes(value);
+    this.changed.emit(this);
   }
 
   get isoThreshold(): number {

@@ -51,6 +51,21 @@ export { LabelsLayer } from './layers/labels-layer';
 export type { LabelsLayerOptions, LabelData } from './layers/labels-layer';
 export { VolumeLayer } from './layers/volume-layer';
 export type { VolumeLayerOptions, VolumeRendering } from './layers/volume-layer';
+export {
+  clipRayRange,
+  clipRayRangeByPlanes,
+  defaultVolumePlane,
+  halfSpace,
+  normalizeVolumePlane,
+  planeSlabContains,
+  volumePlaneSlice,
+} from './layers/volume-plane';
+export type {
+  NormalizedVolumePlane,
+  VolumeDepiction,
+  VolumePlane,
+  VolumeSlice,
+} from './layers/volume-plane';
 export { AxesLayer, axesLineVertices } from './layers/axes-layer';
 export type { AxesLayerOptions, AxesColors } from './layers/axes-layer';
 export { SurfaceLayer, heightField } from './layers/surface-layer';
