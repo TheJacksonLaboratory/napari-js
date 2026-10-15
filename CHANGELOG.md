@@ -120,8 +120,9 @@ All notable changes to napari-js are documented here. The format roughly follows
   - Moving a plane re-uploads nothing.
 
 - **Surface picking.** `viewer.canvasRay(x, y)` is the world ray under a canvas point;
-  `viewer.pickSurface(x, y, { pickable })` the nearest visible surface hit `{ layer, face, point,
-distance }`, clipped-away parts skipped (surfaces only: a volume in front does not hide one);
+  `viewer.pickSurface(x, y, { pickable })` the nearest visible surface hit
+  `{ layer, face, point, distance }`, skipping clipped-away parts and anything beyond the far plane
+  (a `screenRay` carries its `length`); surfaces only: a volume in front does not hide one.
   `SurfaceLayer.pick(ray)` the same for one layer. The helpers are exported: `screenRay`,
   `rayHitBox`, `rayHitTriangles` (Möller–Trumbore) and `invertMat4`. On `ViewerBase`, so
   `HeadlessViewer` picks too.
@@ -161,6 +162,12 @@ mu })` is Laplacian smoothing, or Taubin with `mu` (keeps the volume). Pure; wor
   unless `NAPARI_GPU_REQUIRED=1`. CI runs them on Chromium's SwiftShader adapter in a `gpu` job.
 
 ### Changed
+
+- **Translucent surfaces write no depth and draw last.** A `SurfaceLayer` that lets what is behind it
+  show through (`translucent`: not opaque blending, and an opacity, colour alpha or vertex alpha
+  below 1) is still hidden by opaque geometry in front of it but no longer hides what is drawn
+  behind it; the renderer draws such surfaces after every other 3D layer, farthest first
+  (`drawOrder3D`). Before, a surface added after a translucent one was hidden behind it.
 
 - **`addVolume` frames like the other 3D adders**: on `layer.bounds()` through `framingFor` (field
   of view and canvas aspect), not `Camera3D.frame`'s `max(w, h, d) × 1.8`. Same target (the
