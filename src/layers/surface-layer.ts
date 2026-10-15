@@ -4,6 +4,7 @@ import { mapScalar } from '../color/display-pipeline';
 import { parseColor } from '../color/parse';
 import type { RGBA } from './points-layer';
 import { normalizeClippingPlanes, type ClippingPlane } from './clipping';
+import { rayHitBox, rayHitTriangles, type Ray, type TriangleHit } from '../picking/ray';
 
 /** How a surface is coloured; see {@link SurfaceLayer.colorMode}. */
 export type SurfaceColorMode = 'vertex' | 'color' | 'colormap';
@@ -87,6 +88,8 @@ export class SurfaceLayer extends Layer {
   private _color: RGBA | null = null;
   private _vertexColors: Float32Array | null = null;
   private _clippingPlanes: ClippingPlane[] = [];
+  /** {@link bounds}, kept until the next {@link setData}. */
+  private _bounds: { version: number; bounds: SurfaceBounds } | null = null;
 
   private _colormap: Colormap;
   private _contrastLimits: [number, number];
@@ -287,8 +290,30 @@ export class SurfaceLayer extends Layer {
     this.changed.emit(this);
   }
 
+  /**
+   * The nearest triangle `ray` hits (world coordinates, the mesh's own: a surface is drawn
+   * untransformed), either side, skipping what the {@link clippingPlanes} cut away; or null. Ignores
+   * {@link visible} — see {@link ViewerBase.pickSurface} for picking what is on screen. A
+   * bounding-box test first, so a miss costs nothing per triangle.
+   */
+  pick(ray: Ray): TriangleHit | null {
+    const { min, max } = this.bounds();
+    if (this.vertexCount === 0 || rayHitBox(ray, min, max) === Infinity) return null;
+    return rayHitTriangles(ray, this._vertices, this._faces, {
+      clippingPlanes: this._clippingPlanes,
+    });
+  }
+
   /** Axis-aligned bounds + a center/radius the viewer uses to frame the orbit camera. */
   bounds(): SurfaceBounds {
+    const cached = this._bounds;
+    if (cached && cached.version === this.dataVersion) return cloneBounds(cached.bounds);
+    const bounds = this.computeBounds();
+    this._bounds = { version: this.dataVersion, bounds };
+    return cloneBounds(bounds);
+  }
+
+  private computeBounds(): SurfaceBounds {
     const v = this.vertices;
     if (v.length === 0) {
       return { min: [0, 0, 0], max: [0, 0, 0], center: [0, 0, 0], radius: 1 };
@@ -443,6 +468,10 @@ function centerVerticesInPlace(vertices: Float32Array): void {
     vertices[i + 1] -= cy;
     vertices[i + 2] -= cz;
   }
+}
+
+function cloneBounds(b: SurfaceBounds): SurfaceBounds {
+  return { min: [...b.min], max: [...b.max], center: [...b.center], radius: b.radius };
 }
 
 /** A CSS colour or RGBA (0..1) as RGBA; throws for a colour that does not parse. */
