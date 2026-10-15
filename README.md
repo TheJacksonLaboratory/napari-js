@@ -98,7 +98,9 @@ are instances of the same classes `napari-js` exports.
 ### Overlays: `napari-js/overlays`
 
 DOM chrome over the canvas, as napari's viewer overlays: a physical scale bar (2D zoom, or the 3D
-camera at its target's depth), crisp 3D axis labels, and an OpenSeadragon-style 2D navigator. Each
+camera at its target's depth), crisp 3D axis labels, an OpenSeadragon-style 2D navigator, and
+`SlicePlanesWidget`: three orthogonal slice planes through a volume with grips that drag them along
+their axes (demo 9). Each
 takes `(host, viewer, opts)` and has `dispose()`; the main bundle does not include them.
 
 ```ts

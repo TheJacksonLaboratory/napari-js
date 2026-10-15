@@ -143,6 +143,17 @@ distance }`, clipped-away parts skipped (surfaces only: a volume in front does n
 mu })` is Laplacian smoothing, or Taubin with `mu` (keeps the volume). Pure; workers too. A 256³
   sphere meshes in about 0.17 s.
 
+- **`SlicePlanesWidget` in `napari-js/overlays`** (napari's 3D plane widget): three orthogonal slice
+  planes through a volume, translucent quads in the axes' colours (`DEFAULT_AXES_COLORS`, now
+  exported), each with a DOM grip over the canvas that drags it along its axis (the cursor's ray
+  from `viewer.canvasRay`, nearest the axis line). Positions are data (voxel) coordinates, as
+  `VolumeLayer.plane` and clipping planes use them, clamped to the voxel centres, with optional
+  `snap`. A move replaces the quad in place (`SurfaceLayer.setData`); grips are projected with the
+  viewer's own viewport, so they stay on their planes. `changed` fires on drags (`dragging: true`),
+  release and `setPosition`; arrow keys step a focused grip; `linkPlane` keeps the volume's `plane`
+  on one of them. Pure helpers: `volumeDataToWorld`, `slicePlaneCorners`, `slicePlaneGripPoint`,
+  `rayAxisParam`. Playground demo 9.
+
 - **Real-GPU tests (`npm run test:gpu`).** The real `Viewer` in headless Chromium (Vitest browser
   mode, Playwright), pixels read back with `readDisplayedPixels` and checked against the CPU
   references (`mapScalar`, `buildLabelLut`, `volumePlaneSlice`, …) and geometry rather than golden
