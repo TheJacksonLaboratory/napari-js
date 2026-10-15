@@ -263,4 +263,25 @@ describeGpu('SurfaceLayer colour, setData, clipping and picking on the GPU', () 
       if (hit) expect(rgb.indexOf(Math.max(...rgb))).toBe(0);
     });
   });
+
+  it('picks what it draws as a surface crosses the far plane: nothing beyond it', async () => {
+    const { vertices, faces } = quad(4);
+    const layer = viewer.addSurface(vertices, faces, undefined, { color: '#ffffff', fit: 'never' });
+    viewer.camera3d.target = [0, 0, 0];
+    viewer.camera3d.azimuth = 0;
+    viewer.camera3d.elevation = 0;
+    viewer.camera3d.distance = 3;
+    const ray = viewer.canvasRay(C + 0.5, C + 0.5)!;
+    expect(Math.abs(ray.dir[2])).toBeGreaterThan(0.99); // looking along z, the quad faces it
+    for (const dt of [-2, -0.5, 0.5, 2]) {
+      // The quad in the plane facing the camera at the far plane's distance + dt along the ray.
+      const z = ray.origin[2] + ray.dir[2] * (ray.length! + dt);
+      const moved = quad(4, z);
+      layer.setData(moved.vertices, moved.faces);
+      const drawn = pixel(await viewer.readDisplayedPixels(), C, C)[0] > 128;
+      const picked = viewer.pickSurface(C + 0.5, C + 0.5) !== null;
+      expect(drawn).toBe(dt < 0);
+      expect(picked).toBe(drawn);
+    }
+  });
 });

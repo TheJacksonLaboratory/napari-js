@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
 
 import { projectPoint, type PixelData, type Viewer } from '../../src';
-import { SlicePlanesWidget, slicePlaneCorners, type SliceAxis } from '../../src/overlays';
+import {
+  SlicePlanesWidget,
+  slicePlaneCorners,
+  volumeDataToWorld,
+  type SliceAxis,
+} from '../../src/overlays';
 import {
   SIZE,
   SOFTWARE,
@@ -119,5 +124,51 @@ describeGpu('slice-plane widget on the GPU', () => {
     const [r, , b] = pixel(await viewer.readDisplayedPixels(), C, C);
     expect(r).toBeGreaterThan(bare[0] * 0.6); // the cube still shows
     expect(b).toBeGreaterThanOrEqual(r - TOL); // tinted toward the plane's blue
+  });
+
+  it('lets a surface behind a plane show through, whether added before or after the widget', async () => {
+    // An opaque red square through the middle of the volume, behind a z plane at its front.
+    const [cx, cy, cz] = volumeDataToWorld({ shape: [N, N, N] }, [N / 2, N / 2, N / 2]);
+    const h = N / 4;
+    const square = () =>
+      viewer.addSurface(
+        Float32Array.of(
+          cx - h,
+          cy - h,
+          cz,
+          cx + h,
+          cy - h,
+          cz,
+          cx + h,
+          cy + h,
+          cz,
+          cx - h,
+          cy + h,
+          cz,
+        ),
+        Uint32Array.of(0, 1, 2, 0, 2, 3),
+        undefined,
+        { color: '#ff0000', fit: 'never' },
+      );
+    const volume = viewer.addVolume(new Uint8Array(N * N * N), N, N, N, { colormap: 'gray' });
+    look(0);
+    const check = async () => {
+      const [r, , b] = pixel(await viewer.readDisplayedPixels(), C, C);
+      expect(r).toBeGreaterThan(150); // the square shows through the plane
+      expect(b).toBeGreaterThan(TOL); // under the plane's blue tint
+      widget!.setVisible('z', false);
+      expect(pixel(await viewer.readDisplayedPixels(), C, C)[0]).toBeGreaterThan(255 - TOL);
+      widget!.setVisible('z', true);
+    };
+
+    // Added before the widget.
+    const before = square();
+    widget = new SlicePlanesWidget(host, viewer, { volume, axes: ['z'], positions: { z: N - 1 } });
+    await check();
+    viewer.layers.remove(before);
+
+    // Added after it: the plane writes no depth, so the square is not hidden behind it.
+    square();
+    await check();
   });
 });

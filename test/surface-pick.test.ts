@@ -155,4 +155,31 @@ describe('ViewerBase.pickSurface', () => {
     v.dims.ndisplay = 2;
     expect(v.pickSurface(200, 150)).toBeNull();
   });
+
+  it('picks only within the depth range the camera draws: nothing beyond the far plane', () => {
+    const v = new HeadlessViewer({ canvasRect: { width: 400, height: 300 } });
+    const anchor = cube([0, 0, 0]);
+    v.addSurface(anchor.vertices, anchor.faces, undefined, { name: 'anchor', visible: false });
+    v.camera3d.distance = 3;
+    const ray = v.canvasRay(200, 150)!;
+    // The ray runs from the near plane to the far plane: length = far − near along the centre.
+    expect(ray.length).toBeGreaterThan(0);
+    const at = (t: number): [number, number, number] => [
+      ray.origin[0] + ray.dir[0] * t,
+      ray.origin[1] + ray.dir[1] * t,
+      ray.origin[2] + ray.dir[2] * t,
+    ];
+    const beyond = cube(at(ray.length! + 5));
+    const layer = v.addSurface(beyond.vertices, beyond.faces, undefined, { fit: 'never' });
+    // Beyond the far plane the GPU draws nothing, and nothing is picked: projectPoint agrees.
+    expect(v.projectPoints(Float32Array.from(at(ray.length! + 5)))!.screen[0]).toBeNaN();
+    expect(v.pickSurface(200, 150)).toBeNull();
+    expect(layer.pick(ray)).toBeNull();
+    // The same mesh as plain geometry: an unbounded ray finds it.
+    expect(layer.pick({ origin: ray.origin, dir: ray.dir })).not.toBeNull();
+    // Moved inside the far plane, it is picked.
+    const inside = cube(at(ray.length! - 3));
+    layer.setData(inside.vertices, inside.faces);
+    expect(v.pickSurface(200, 150)!.layer).toBe(layer);
+  });
 });

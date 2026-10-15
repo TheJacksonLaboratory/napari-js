@@ -6,6 +6,12 @@ import { invertMat4 } from '../math/mat4';
 export interface Ray {
   origin: [number, number, number];
   dir: [number, number, number];
+  /**
+   * Where the ray stops counting (world units along it), if anywhere: for a {@link screenRay}, the
+   * far plane — the GPU draws nothing beyond it, so a pick there would find what is not on screen.
+   * Absent: the ray is unbounded.
+   */
+  length?: number;
 }
 
 /** Where a ray meets a mesh: `distance` along the ray (world units), the triangle, the point. */
@@ -19,8 +25,9 @@ export interface TriangleHit {
 /**
  * The ray under canvas point (`x`, `y`) of a `vw`×`vh` canvas (CSS pixels, the units of a
  * pointer event's `offsetX`/`offsetY` and of {@link projectPoint}), through the column-major
- * view-projection `mvp`: from the near plane, away from the eye. Null for a singular matrix or
- * an empty viewport. The inverse of {@link projectPoint}: a point projected to (x, y) lies on it.
+ * view-projection `mvp`: from the near plane, away from the eye, its {@link Ray.length} the
+ * distance to the far plane (the depth range the camera draws). Null for a singular matrix or an
+ * empty viewport. The inverse of {@link projectPoint}: a point projected to (x, y) lies on it.
  */
 export function screenRay(
   mvp: ArrayLike<number>,
@@ -43,7 +50,7 @@ export function screenRay(
   const dz = far[2] - near[2];
   const len = Math.hypot(dx, dy, dz);
   if (!(len > 0)) return null;
-  return { origin: near, dir: [dx / len, dy / len, dz / len] };
+  return { origin: near, dir: [dx / len, dy / len, dz / len], length: len };
 }
 
 /**

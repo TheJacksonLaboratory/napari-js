@@ -90,6 +90,8 @@ export class SurfaceLayer extends Layer {
   private _clippingPlanes: ClippingPlane[] = [];
   /** {@link bounds}, kept until the next {@link setData}. */
   private _bounds: { version: number; bounds: SurfaceBounds } | null = null;
+  /** Whether a per-vertex colour has alpha below 1, as of {@link colorVersion}. */
+  private _vertexAlpha: { version: number; partial: boolean } | null = null;
 
   private _colormap: Colormap;
   private _contrastLimits: [number, number];
@@ -256,6 +258,27 @@ export class SurfaceLayer extends Layer {
     this.changed.emit(this);
   }
 
+  /**
+   * Whether the surface lets what is behind it show through: not `'opaque'` blending, and an
+   * {@link opacity}, {@link color} alpha or per-vertex alpha below 1. A translucent surface is drawn
+   * after every other 3D layer, back to front, and does not write depth (it is still hidden by
+   * opaque geometry in front of it), so a surface behind it shows whichever was added first.
+   */
+  get translucent(): boolean {
+    if (this.blending === 'opaque') return false;
+    if (this.opacity < 1) return true;
+    const vc = this._vertexColors;
+    if (vc) {
+      if (this._vertexAlpha?.version !== this.colorVersion) {
+        let partial = false;
+        for (let i = 3; i < vc.length && !partial; i += 4) partial = vc[i] < 1;
+        this._vertexAlpha = { version: this.colorVersion, partial };
+      }
+      return this._vertexAlpha.partial;
+    }
+    return !!this._color && this._color[3] < 1;
+  }
+
   /** What colours the surface: per-vertex colours, one {@link color}, or `values` and the colormap. */
   get colorMode(): SurfaceColorMode {
     return this._vertexColors ? 'vertex' : this._color ? 'color' : 'colormap';
@@ -293,14 +316,17 @@ export class SurfaceLayer extends Layer {
   /**
    * The nearest triangle `ray` hits (world coordinates, the mesh's own: a surface is drawn
    * untransformed), either side, skipping what the {@link clippingPlanes} cut away; or null. Ignores
-   * {@link visible} — see {@link ViewerBase.pickSurface} for picking what is on screen. A
-   * bounding-box test first, so a miss costs nothing per triangle.
+   * {@link visible} — see {@link ViewerBase.pickSurface} for picking what is on screen. Hits beyond
+   * the ray's {@link Ray.length} (a {@link screenRay}'s far plane) do not count. A bounding-box test
+   * first, so a miss costs nothing per triangle.
    */
   pick(ray: Ray): TriangleHit | null {
     const { min, max } = this.bounds();
-    if (this.vertexCount === 0 || rayHitBox(ray, min, max) === Infinity) return null;
+    const maxDistance = ray.length ?? Infinity;
+    if (this.vertexCount === 0 || !(rayHitBox(ray, min, max) <= maxDistance)) return null;
     return rayHitTriangles(ray, this._vertices, this._faces, {
       clippingPlanes: this._clippingPlanes,
+      maxDistance,
     });
   }
 

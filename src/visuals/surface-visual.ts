@@ -96,6 +96,7 @@ export class SurfaceVisual implements LayerVisual {
   private pipeline: GPURenderPipeline;
   private currentBlend: BlendMode;
   private currentWireframe: boolean;
+  private currentTranslucent: boolean;
   private lutVersion: number;
 
   constructor(
@@ -126,7 +127,13 @@ export class SurfaceVisual implements LayerVisual {
     this.currentBlend = layer.blending;
     this.currentWireframe = layer.wireframe;
     this.currentVertexColors = layer.vertexColors !== null;
-    this.pipeline = this.buildPipeline(layer.blending, layer.wireframe, this.currentVertexColors);
+    this.currentTranslucent = layer.translucent;
+    this.pipeline = this.buildPipeline(
+      layer.blending,
+      layer.wireframe,
+      this.currentVertexColors,
+      this.currentTranslucent,
+    );
     this.bindGroup = this.buildBindGroup();
   }
 
@@ -177,6 +184,7 @@ export class SurfaceVisual implements LayerVisual {
     blend: BlendMode,
     wireframe: boolean,
     vertexColors: boolean,
+    translucent: boolean,
   ): GPURenderPipeline {
     return this.device.createRenderPipeline({
       layout: 'auto',
@@ -204,7 +212,9 @@ export class SurfaceVisual implements LayerVisual {
       },
       // Wireframe draws the triangle edges as a line-list; filled draws the triangles.
       primitive: { topology: wireframe ? 'line-list' : 'triangle-list', cullMode: 'none' },
-      depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'less' },
+      // A translucent surface is depth-tested (opaque geometry in front hides it) but does not
+      // write depth, so what is drawn behind it after it still shows through.
+      depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: !translucent, depthCompare: 'less' },
     });
   }
 
@@ -230,15 +240,23 @@ export class SurfaceVisual implements LayerVisual {
 
   sync(): void {
     const vertexColors = this.layer.vertexColors !== null;
+    const translucent = this.layer.translucent;
     if (
       this.layer.blending !== this.currentBlend ||
       this.layer.wireframe !== this.currentWireframe ||
-      vertexColors !== this.currentVertexColors
+      vertexColors !== this.currentVertexColors ||
+      translucent !== this.currentTranslucent
     ) {
       this.currentBlend = this.layer.blending;
       this.currentWireframe = this.layer.wireframe;
       this.currentVertexColors = vertexColors;
-      this.pipeline = this.buildPipeline(this.currentBlend, this.currentWireframe, vertexColors);
+      this.currentTranslucent = translucent;
+      this.pipeline = this.buildPipeline(
+        this.currentBlend,
+        this.currentWireframe,
+        vertexColors,
+        translucent,
+      );
       this.bindGroup = this.buildBindGroup();
     }
     if (this.layer.colormapVersion !== this.lutVersion) {

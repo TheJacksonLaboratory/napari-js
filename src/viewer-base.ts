@@ -341,8 +341,9 @@ export abstract class ViewerBase {
   /**
    * The surface under canvas point (`canvasX`, `canvasY`) (CSS pixels, as {@link canvasRay}): the
    * nearest hit among the visible {@link SurfaceLayer}s that `pickable` accepts, skipping what
-   * each one's clipping planes cut away. Null in 2D, or on a miss. Only surfaces are tested: a
-   * volume or points drawn in front do not hide one.
+   * each one's clipping planes cut away, and within the depth range the camera draws (nothing
+   * beyond the far plane). Null in 2D, or on a miss. Only surfaces are tested: a volume or points
+   * drawn in front do not hide one.
    */
   pickSurface(
     canvasX: number,
