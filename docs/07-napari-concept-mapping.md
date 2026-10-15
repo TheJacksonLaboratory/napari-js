@@ -23,12 +23,16 @@ A reference for porters: where each napari (Python) concept lives, and its napar
 | `Labels` (`layers/labels/labels.py`)    | `LabelsLayer`                           | NJ-5      |
 | `Points` (`layers/points/points.py`)    | `PointsLayer`                           | NJ-5      |
 | `Image` 3D / volume                     | `VolumeLayer`                           | NJ-5+     |
+| `depiction='plane'`, `plane`            | `VolumeLayer.depiction` / `plane`       | NJ-6      |
+| `experimental_clipping_planes`          | `clippingPlanes` (volume, surface)      | NJ-6      |
 | `Surface` (`layers/surface/surface.py`) | `SurfaceLayer` (+ `heightField` helper) | NJ-6      |
-| `Vectors`, `Tracks`, `Shapes`           | (not yet; Shapes ≈ jit-ui regions)      | later     |
+| `marching_cubes` (skimage) → surface    | `surfaceNets` (`napari-js/geometry`)    | NJ-6      |
+| `Shapes` (rings)                        | `ShapesLayer`                           | NJ-6      |
+| `Vectors`, `Tracks`                     | (not yet)                               | later     |
 
 Shared layer properties (napari `layers/base/base.py`) → napari-js `layers/layer.ts`:
-`opacity`, `blending`, `visible`, `name`, and an affine `transform` (scale/translate/rotate
-/shear). Identical model.
+`opacity`, `blending`, `visible`, `name`, and a 2D data→world `scale` / `translate` (no rotate
+or shear yet; 3D layers place themselves by `voxelSize` or their vertex coordinates).
 
 ## Rendering boundary
 
