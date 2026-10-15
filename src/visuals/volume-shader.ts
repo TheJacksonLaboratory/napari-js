@@ -169,7 +169,8 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
         let gx = sampleWindowed(pos + vec3<f32>(e, 0.0, 0.0)) - sampleWindowed(pos - vec3<f32>(e, 0.0, 0.0));
         let gy = sampleWindowed(pos + vec3<f32>(0.0, e, 0.0)) - sampleWindowed(pos - vec3<f32>(0.0, e, 0.0));
         let gz = sampleWindowed(pos + vec3<f32>(0.0, 0.0, e)) - sampleWindowed(pos - vec3<f32>(0.0, 0.0, e));
-        let n = normalize(vec3<f32>(gx, gy, gz) + vec3<f32>(1e-5));
+        // The density gradient points into the surface: the outward normal is its negation.
+        let n = normalize(-vec3<f32>(gx, gy, gz) + vec3<f32>(1e-5));
         let lightDir = normalize(vec3<f32>(0.5, 0.7, 1.0));
         let lambert = max(dot(n, lightDir), 0.0) * 0.8 + 0.2;
         col = shade(tw) * lambert;

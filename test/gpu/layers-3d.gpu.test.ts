@@ -79,12 +79,9 @@ describeGpu('3D layers on the GPU', () => {
     expect(Math.abs(coverage(px, 32) - mip)).toBeLessThan(0.05);
   });
 
-  // KNOWN BUG (volume-shader.ts, iso branch): the normal is the density gradient, which points
-  // INTO the surface, so the faces toward the light (0.5, 0.7, 1) get only the 0.2 ambient term
-  // and the faces away from it are lit. On Metal: the cube's +x/+y/+z faces read 30, its
-  // −x/−y/−z faces 75/93/120 — the reverse of lambert with outward normals. `it.fails` keeps
-  // the suite green until the sign is fixed; then this starts failing: make it a plain `it`.
-  it.fails('lights the iso-surface faces that face the light', async () => {
+  // The outward normal is the negated density gradient: the faces toward the light (0.5, 0.7, 1)
+  // are lit, those away from it get the ambient term.
+  it('lights the iso-surface faces that face the light', async () => {
     viewer.addVolume(cubeVolume(32, 6, 255), 32, 32, 32, {
       rendering: 'iso',
       isoThreshold: 0.5,
