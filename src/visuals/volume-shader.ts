@@ -8,11 +8,20 @@
 // un-inverted windowed value. Inverting those would make the empty space around an object the
 // brightest, most opaque thing in the box; inverting only the colour keeps what is drawn and
 // changes how it is coloured.
+//
+// The 'plane' depiction (napari's) and the clipping planes work in data (voxel) coordinates, where
+// voxel (i, j, k) is centred on [i, j, k]: texture coordinate × dims − 0.5. Each is a half-space
+// along the ray, so it narrows the marched range [tNear, tFar] analytically rather than testing
+// every sample. A plane at most one voxel thick is sampled once, where the ray crosses it.
 export const VOLUME_SHADER = /* wgsl */ `
 struct U {
   invMvp : mat4x4<f32>,
   params : vec4<f32>,   // climLo, climHi (normalized 0..1), gamma, opacity
   params2 : vec4<f32>,  // renderingCode (0=mip,1=translucent,2=iso), isoThreshold, steps, invert
+  dims : vec4<f32>,     // width, height, depth (voxels), depiction (0 volume, 1 plane)
+  plane : vec4<f32>,    // the depicted plane: unit normal (data coords), -dot(normal, position)
+  plane2 : vec4<f32>,   // half thickness (voxels), clipping plane count, 0, 0
+  clip : array<vec4<f32>, 6>,  // clipping planes as plane is; a sample is kept where dot(n, p) + w >= 0
 };
 @group(0) @binding(0) var<uniform> u : U;
 @group(0) @binding(1) var volSamp : sampler;
@@ -56,6 +65,25 @@ fn sampleWindowed(pos : vec3<f32>) -> f32 {
   return pow(sampleT(pos), u.params.z);
 }
 
+// Texture space [0,1]^3 → data (voxel) coordinates.
+fn toData(pos : vec3<f32>) -> vec3<f32> {
+  return pos * u.dims.xyz - vec3<f32>(0.5);
+}
+
+// Narrow the ray range (x = near, y = far) to where the half-space dot(h.xyz, p) + h.w >= 0 holds;
+// an empty result has x > y. ro and rd are in texture space, the half-space in data coordinates.
+fn keepHalfSpace(range : vec2<f32>, ro : vec3<f32>, rd : vec3<f32>, h : vec4<f32>) -> vec2<f32> {
+  let a = dot(h.xyz, toData(ro)) + h.w;
+  let b = dot(h.xyz, rd * u.dims.xyz);
+  if (abs(b) < 1e-9) {
+    if (a < 0.0) { return vec2<f32>(1.0, 0.0); }
+    return range;
+  }
+  let tc = -a / b;
+  if (b > 0.0) { return vec2<f32>(max(range.x, tc), range.y); }
+  return vec2<f32>(range.x, min(range.y, tc));
+}
+
 fn lutColor(t : f32) -> vec3<f32> {
   return textureSampleLevel(lut, lutSamp, vec2<f32>(clamp(t, 0.0, 1.0), 0.5), 0.0).rgb;
 }
@@ -79,11 +107,33 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
   let t1 = (vec3<f32>(1.0) - ro) * inv;
   let tmin = min(t0, t1);
   let tmax = max(t0, t1);
-  let tNear = max(max(max(tmin.x, tmin.y), tmin.z), 0.0);
-  let tFar = min(min(tmax.x, tmax.y), 1.0 * min(tmax.z, 1.0e9));
-  if (tFar <= tNear) { discard; }
+  var range = vec2<f32>(
+    max(max(max(tmin.x, tmin.y), tmin.z), 0.0),
+    min(min(tmax.x, tmax.y), 1.0 * min(tmax.z, 1.0e9)),
+  );
+  var steps = i32(u.params2.z);
 
-  let steps = i32(u.params2.z);
+  if (u.dims.w > 0.5) {
+    let half = u.plane2.x;
+    if (half > 0.5) {
+      // A slab thicker than one voxel: march the part of the ray inside it.
+      range = keepHalfSpace(range, ro, rd, vec4<f32>(u.plane.xyz, u.plane.w + half));
+      range = keepHalfSpace(range, ro, rd, vec4<f32>(-u.plane.xyz, half - u.plane.w));
+    } else {
+      // One voxel thick or thinner: the plane itself, sampled once where the ray crosses it (an
+      // axis-aligned plane at an integer position lands on voxel centres: exactly that slice).
+      let b = dot(u.plane.xyz, rd * u.dims.xyz);
+      if (abs(b) < 1e-9) { discard; }
+      let tp = -(dot(u.plane.xyz, toData(ro)) + u.plane.w) / b;
+      if (tp < range.x || tp > range.y) { discard; }
+      range = vec2<f32>(tp, tp);
+      steps = 1;
+    }
+  }
+  if (range.y < range.x || (steps > 1 && range.y == range.x)) { discard; }
+
+  let tNear = range.x;
+  let tFar = range.y;
   let dt = (tFar - tNear) / f32(steps);
   let mode = u.params2.x;
   let opacity = u.params.w;

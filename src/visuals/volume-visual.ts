@@ -5,9 +5,14 @@ import { multiply, scale3d, translate3d, invert, type Mat4 } from '../math/mat4'
 import { buildLut, LUT_SIZE } from '../color/lut';
 import { VOLUME_SHADER } from './volume-shader';
 import { blendStateFor } from './blend';
+import { halfSpace } from '../layers/volume-plane';
+import { MAX_CLIPPING_PLANES } from '../layers/clipping';
 
-/** mat4(16) + vec4 params + vec4 params2. */
-export const VOLUME_UNIFORM_FLOATS = 24;
+/**
+ * mat4(16) + vec4 params + vec4 params2 + vec4 dims + vec4 plane + vec4 plane2 +
+ * vec4 clip[MAX_CLIPPING_PLANES] — the layout of `U` in volume-shader.ts.
+ */
+export const VOLUME_UNIFORM_FLOATS = 36 + 4 * MAX_CLIPPING_PLANES;
 const UNIFORM_BYTES = VOLUME_UNIFORM_FLOATS * 4;
 const STEPS = 192;
 
@@ -27,6 +32,20 @@ export function packVolumeUniforms(out: Float32Array, layer: VolumeLayer, invMvp
   out[21] = layer.isoThreshold;
   out[22] = STEPS;
   out[23] = layer.invert ? 1 : 0;
+  // dims: the voxel grid (the shader maps texture space to data coordinates) and the depiction.
+  out[24] = layer.width;
+  out[25] = layer.height;
+  out[26] = layer.depth;
+  out[27] = layer.depiction === 'plane' ? 1 : 0;
+  // plane: the depicted plane as a half-space (unit normal, −dot(normal, position)).
+  const plane = layer.plane;
+  out.set(halfSpace(plane), 28);
+  // plane2: half the slab's thickness (voxels), the clipping plane count, unused.
+  out[32] = (plane.thickness ?? 1) / 2;
+  out[33] = 0;
+  out[34] = 0;
+  out[35] = 0;
+  out.fill(0, 36, VOLUME_UNIFORM_FLOATS);
 }
 
 /**
