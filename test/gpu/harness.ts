@@ -128,3 +128,18 @@ export function cubeVolume(n: number, half: number, value = 255): Uint8Array {
       }
   return data;
 }
+
+/** The bounding box `[x0, y0, x1, y1]` of the pixels whose brightest channel exceeds `threshold`. */
+export function litBox(px: PixelData, threshold: number): [number, number, number, number] {
+  const box: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (let y = 0; y < px.height; y++)
+    for (let x = 0; x < px.width; x++) {
+      const i = (y * px.width + x) * 4;
+      if (Math.max(px.data[i], px.data[i + 1], px.data[i + 2]) <= threshold) continue;
+      box[0] = Math.min(box[0], x);
+      box[1] = Math.min(box[1], y);
+      box[2] = Math.max(box[2], x);
+      box[3] = Math.max(box[3], y);
+    }
+  return box;
+}

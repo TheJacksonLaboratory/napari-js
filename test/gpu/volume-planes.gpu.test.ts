@@ -19,6 +19,7 @@ import {
   cubeVolume,
   describeGpu,
   disposeViewer,
+  litBox,
   makeViewer,
   maxDiff,
   pixel,
@@ -44,21 +45,6 @@ function screenOf(
   const [vw, vh] = viewer.viewportSize();
   const q = projectPoint(viewer.camera3d.viewProjection(vw, vh), world, vw, vh);
   return [q.x, q.y];
-}
-
-/** The lit pixels' bounding box `[x0, y0, x1, y1]` (brightest channel above `threshold`). */
-function litBox(px: { width: number; height: number; data: Uint8ClampedArray }, threshold: number) {
-  const box = [Infinity, Infinity, -Infinity, -Infinity];
-  for (let y = 0; y < px.height; y++)
-    for (let x = 0; x < px.width; x++) {
-      const i = (y * px.width + x) * 4;
-      if (Math.max(px.data[i], px.data[i + 1], px.data[i + 2]) <= threshold) continue;
-      box[0] = Math.min(box[0], x);
-      box[1] = Math.min(box[1], y);
-      box[2] = Math.max(box[2], x);
-      box[3] = Math.max(box[3], y);
-    }
-  return box;
 }
 
 describeGpu('Volume plane depiction and clipping planes on the GPU', () => {
