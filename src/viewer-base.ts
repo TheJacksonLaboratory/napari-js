@@ -12,6 +12,7 @@ import { ShapesLayer, type ShapesLayerOptions } from './layers/shapes-layer';
 import type { Fit3D } from './layers/layer';
 import { unionBounds, Fit3DState, framingFor } from './scene/fit';
 import { projectPoints, type ProjectedPoints } from './picking/project';
+import { screenRay, type Ray, type TriangleHit } from './picking/ray';
 import { toTextureSource, depthOf, type ImageInput } from './io/texture-source';
 import { worldViewport, type Rect } from './io/pyramid';
 import type { Dims } from './scene/dims';
@@ -40,6 +41,11 @@ export interface CanvasGeometry {
  * `fitToLayers` tests the double, not the library. Each subclass supplies only the canvas
  * geometry and what it does about rendering.
  */
+/** A {@link ViewerBase.pickSurface} hit: the layer, the triangle, the point and its distance. */
+export interface SurfacePick extends TriangleHit {
+  layer: SurfaceLayer;
+}
+
 export abstract class ViewerBase {
   readonly model = new ViewerModel();
 
@@ -318,6 +324,43 @@ export abstract class ViewerBase {
     const [vw, vh] = this.viewportSize();
     if (!vw || !vh) return null;
     return projectPoints(this.model.camera3d.viewProjection(vw, vh), positions, vw, vh, out);
+  }
+
+  /**
+   * The world ray under canvas point (`canvasX`, `canvasY`) — CSS pixels from the canvas's
+   * top-left, the units of a pointer event's `offsetX`/`offsetY` — under the current 3D camera,
+   * from the near plane away from the eye. Uses {@link viewportSize}, what the renderer projects
+   * with, so a ray and {@link projectPoints} agree. Null before the canvas has a size.
+   */
+  canvasRay(canvasX: number, canvasY: number): Ray | null {
+    const [vw, vh] = this.viewportSize();
+    if (!vw || !vh) return null;
+    return screenRay(this.model.camera3d.viewProjection(vw, vh), canvasX, canvasY, vw, vh);
+  }
+
+  /**
+   * The surface under canvas point (`canvasX`, `canvasY`) (CSS pixels, as {@link canvasRay}): the
+   * nearest hit among the visible {@link SurfaceLayer}s that `pickable` accepts, skipping what
+   * each one's clipping planes cut away, and within the depth range the camera draws (nothing
+   * beyond the far plane). Null in 2D, or on a miss. Only surfaces are tested: a volume or points
+   * drawn in front do not hide one.
+   */
+  pickSurface(
+    canvasX: number,
+    canvasY: number,
+    opts: { pickable?: (layer: SurfaceLayer) => boolean } = {},
+  ): SurfacePick | null {
+    if (this.model.dims.ndisplay !== 3) return null;
+    const ray = this.canvasRay(canvasX, canvasY);
+    if (!ray) return null;
+    let best: SurfacePick | null = null;
+    for (const layer of this.model.layers.items) {
+      if (!(layer instanceof SurfaceLayer) || !layer.visible) continue;
+      if (opts.pickable && !opts.pickable(layer)) continue;
+      const hit = layer.pick(ray);
+      if (hit && (!best || hit.distance < best.distance)) best = { ...hit, layer };
+    }
+    return best;
   }
 
   /**

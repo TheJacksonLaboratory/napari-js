@@ -3,6 +3,7 @@
 // Viewer + device
 export { Viewer } from './viewer';
 export type { ViewerOptions } from './viewer';
+export type { SurfacePick } from './viewer-base';
 export { acquireDevice, WebGPUUnsupportedError } from './engine/device';
 export type { DeviceContext, DeviceFeatures } from './engine/device';
 export type { PixelData } from './engine/readback';
@@ -23,6 +24,12 @@ export { DEFAULT_WHEEL_ZOOM_SPEED, WHEEL_DELTA_CLAMP } from './camera/wheel';
 export { DEFAULT_ZOOM_SMOOTHING_MS } from './camera/zoom-smoothing';
 export { Layer } from './layers/layer';
 export type { BlendMode, Fit3D } from './layers/layer';
+export {
+  MAX_CLIPPING_PLANES,
+  insideClippingPlanes,
+  normalizeClippingPlanes,
+} from './layers/clipping';
+export type { ClippingPlane } from './layers/clipping';
 export { ImageLayer } from './layers/image-layer';
 export type { ImageLayerOptions, Interpolation } from './layers/image-layer';
 export { PointsLayer } from './layers/points-layer';
@@ -45,13 +52,29 @@ export { LabelsLayer } from './layers/labels-layer';
 export type { LabelsLayerOptions, LabelData } from './layers/labels-layer';
 export { VolumeLayer } from './layers/volume-layer';
 export type { VolumeLayerOptions, VolumeRendering } from './layers/volume-layer';
-export { AxesLayer, axesLineVertices } from './layers/axes-layer';
+export {
+  clipRayRange,
+  clipRayRangeByPlanes,
+  defaultVolumePlane,
+  halfSpace,
+  normalizeVolumePlane,
+  planeSlabContains,
+  volumePlaneSlice,
+} from './layers/volume-plane';
+export type {
+  NormalizedVolumePlane,
+  VolumeDepiction,
+  VolumePlane,
+  VolumeSlice,
+} from './layers/volume-plane';
+export { AxesLayer, axesLineVertices, DEFAULT_AXES_COLORS } from './layers/axes-layer';
 export type { AxesLayerOptions, AxesColors } from './layers/axes-layer';
 export { SurfaceLayer, heightField } from './layers/surface-layer';
 export type {
   SurfaceLayerOptions,
   SurfaceBounds,
   HeightFieldOptions,
+  SurfaceColorMode,
 } from './layers/surface-layer';
 export { Points3DLayer } from './layers/points3d-layer';
 export type { Points3DLayerOptions } from './layers/points3d-layer';
@@ -72,6 +95,9 @@ export type { GridBounds, GridIndexOptions } from './picking/grid-index';
 export { PointPicker } from './picking/point-picker';
 export type { PointPickerHost, PointPickerOptions } from './picking/point-picker';
 export { projectPoint, projectPoints } from './picking/project';
+export { screenRay, rayHitBox, rayHitTriangles } from './picking/ray';
+export type { Ray, TriangleHit, RayHitTrianglesOptions } from './picking/ray';
+export { invertMat4 } from './math/mat4';
 export type { ProjectedPoint, ProjectedPoints } from './picking/project';
 export { unionBounds, resolveFit, framingFor, Fit3DState } from './scene/fit';
 export type { FramingView } from './scene/fit';

@@ -54,6 +54,38 @@ jobs:
           path: dist/
           retention-days: 7
 
+  gpu:
+    name: GPU tests — WebGPU in headless Chromium (SwiftShader)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # No GPU on the runner: Chromium's SwiftShader adapter. A missing adapter fails the job
+      # instead of skipping every test.
+      - name: Test on the GPU (vitest browser mode)
+        run: npm run test:gpu
+        env:
+          NAPARI_GPU_SWIFTSHADER: '1'
+          NAPARI_GPU_REQUIRED: '1'
+
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-failure-screenshots
+          path: test/gpu/__screenshots__/
+          retention-days: 7
+
   publish:
     name: Publish to npm
     needs: ci

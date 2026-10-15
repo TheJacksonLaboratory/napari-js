@@ -144,7 +144,8 @@ export class Renderer {
             }
           : undefined,
     });
-    for (const layer of layers) {
+    const ordered = rv.ndisplay === 3 ? drawOrder3D(layers, rv.camera3d.eye()) : layers;
+    for (const layer of ordered) {
       if (!layer.visible) continue;
       const visual = this.visuals.get(layer.id);
       if (!visual || visual.ndisplay !== rv.ndisplay) continue;
@@ -178,4 +179,29 @@ export class Renderer {
     this.depthTexture?.destroy();
     this.depthTexture = undefined;
   }
+}
+
+/**
+ * The order 3D layers are drawn in: every layer in list order, then the translucent surfaces
+ * ({@link SurfaceLayer.translucent}) from the farthest to the nearest (by their bounds' centre,
+ * from `eye`). They write no depth, so drawn last each blends over all that is behind it whatever
+ * order the layers were added in. Surfaces that cut through each other (three orthogonal slice
+ * planes) cannot be sorted exactly; the centre order is the usual approximation.
+ */
+export function drawOrder3D(
+  layers: readonly Layer[],
+  eye: readonly [number, number, number],
+): Layer[] {
+  const first: Layer[] = [];
+  const last: Array<{ layer: Layer; d: number }> = [];
+  for (const layer of layers) {
+    if (layer instanceof SurfaceLayer && layer.translucent) {
+      const [cx, cy, cz] = layer.bounds().center;
+      last.push({ layer, d: Math.hypot(cx - eye[0], cy - eye[1], cz - eye[2]) });
+    } else {
+      first.push(layer);
+    }
+  }
+  last.sort((a, b) => b.d - a.d);
+  return [...first, ...last.map((l) => l.layer)];
 }

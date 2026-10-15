@@ -99,7 +99,75 @@ All notable changes to napari-js are documented here. The format roughly follows
 - **`LruCache<V, K = string>`**: the key type is generic (numbers, objects by identity…), so
   numeric-keyed caches can use it too. `V` stays first, so `LruCache<V>` is unchanged.
 
+- **Plane depiction on `VolumeLayer`** (napari's `depiction` / `plane`). `depiction: 'volume' |
+'plane'` and `plane: { position, normal, thickness? }`, in data (voxel) coordinates (voxel
+  `(i, j, k)` centred on `[i, j, k]`), as an option and a live setter. A plane one voxel thick or
+  thinner is sampled once where each ray crosses it, so an axis-aligned plane at an integer position
+  shows exactly that slice; a thicker one marches its slab under the current rendering mode. Only
+  uniforms change: the volume texture is not uploaded again. `MultiChannelVolumeView` carries both
+  through its render options and `setDepiction` / `setPlane`. `volumePlaneSlice` is the CPU
+  reference for what an axis-aligned plane shows, with `planeSlabContains`, `halfSpace` and
+  `clipRayRange`.
+
+- **Clipping planes** (napari's `experimental_clipping_planes`). `ClippingPlane` (`position`,
+  `normal`, `enabled`) in data coordinates keeps `dot(p − position, normal) ≥ 0`; up to
+  `MAX_CLIPPING_PLANES` per layer, `insideClippingPlanes` the CPU reference.
+  - `VolumeLayer.clippingPlanes`: each plane narrows the marched ray range analytically (what is
+    left keeps its full step count), under every rendering mode and a `'plane'` depiction;
+    `MultiChannelVolumeView.setClippingPlanes` sets them on every channel; `clipRayRangeByPlanes`
+    is the CPU reference.
+  - `SurfaceLayer.clippingPlanes`, in the mesh's vertex coordinates, cut fragments in the shader.
+  - Moving a plane re-uploads nothing.
+
+- **Surface picking.** `viewer.canvasRay(x, y)` is the world ray under a canvas point;
+  `viewer.pickSurface(x, y, { pickable })` the nearest visible surface hit
+  `{ layer, face, point, distance }`, skipping clipped-away parts and anything beyond the far plane
+  (a `screenRay` carries its `length`); surfaces only: a volume in front does not hide one.
+  `SurfaceLayer.pick(ray)` the same for one layer. The helpers are exported: `screenRay`,
+  `rayHitBox`, `rayHitTriangles` (Möller–Trumbore) and `invertMat4`. On `ViewerBase`, so
+  `HeadlessViewer` picks too.
+
+- **Solid and per-vertex surface colours.** `SurfaceLayer` takes `color` (a CSS colour or RGBA) and
+  `vertexColors` (packed RGBA, length 4N), which win over `values` + `colormap` in that order;
+  `colorMode` says which applies and `colorAt(i)` is the CPU reference. `color` is a uniform, so
+  recolouring re-uploads nothing; `vertexColors` re-uploads only the colours. `values` is optional.
+
+- **`SurfaceLayer.setData(vertices, faces, values?)`** replaces the mesh in place: the layer keeps
+  its id, style and place in the list, `dataVersion` moves and the visual re-uploads its buffers on
+  the next frame (a buffer is replaced only when outgrown). No remove + re-add to change a mesh.
+
+- **`surfaceNets`, `labelsToMeshes` and `smoothMesh` in `napari-js/geometry`** (napari's
+  `marching_cubes` → `add_surface`). `surfaceNets(mask, [nx, ny, nz], { voxelSize, origin, level })`
+  meshes a voxel mask's boundary by surface nets: closed even at the volume's edge, wound outward,
+  voxel `i` centred on `i` (as `VolumeLayer`'s planes), ready for `addSurface`. `labelsToMeshes`
+  gives one mesh per label, each over its own bounding box. `smoothMesh(mesh, { iterations, lambda,
+mu })` is Laplacian smoothing, or Taubin with `mu` (keeps the volume). Pure; workers too. A 256³
+  sphere meshes in about 0.17 s.
+
+- **`SlicePlanesWidget` in `napari-js/overlays`** (napari's 3D plane widget): three orthogonal slice
+  planes through a volume, translucent quads in the axes' colours (`DEFAULT_AXES_COLORS`, now
+  exported), each with a DOM grip over the canvas that drags it along its axis (the cursor's ray
+  from `viewer.canvasRay`, nearest the axis line). Positions are data (voxel) coordinates, as
+  `VolumeLayer.plane` and clipping planes use them, clamped to the voxel centres, with optional
+  `snap`. A move replaces the quad in place (`SurfaceLayer.setData`); grips are projected with the
+  viewer's own viewport, so they stay on their planes. `changed` fires on drags (`dragging: true`),
+  release and `setPosition`; arrow keys step a focused grip; `linkPlane` keeps the volume's `plane`
+  on one of them. Pure helpers: `volumeDataToWorld`, `slicePlaneCorners`, `slicePlaneGripPoint`,
+  `rayAxisParam`. Playground demo 9.
+
+- **Real-GPU tests (`npm run test:gpu`).** The real `Viewer` in headless Chromium (Vitest browser
+  mode, Playwright), pixels read back with `readDisplayedPixels` and checked against the CPU
+  references (`mapScalar`, `buildLabelLut`, `volumePlaneSlice`, …) and geometry rather than golden
+  images; every WGSL shader is compiled and checked for errors. They skip without a WebGPU adapter
+  unless `NAPARI_GPU_REQUIRED=1`. CI runs them on Chromium's SwiftShader adapter in a `gpu` job.
+
 ### Changed
+
+- **Translucent surfaces write no depth and draw last.** A `SurfaceLayer` that lets what is behind it
+  show through (`translucent`: not opaque blending, and an opacity, colour alpha or vertex alpha
+  below 1) is still hidden by opaque geometry in front of it but no longer hides what is drawn
+  behind it; the renderer draws such surfaces after every other 3D layer, farthest first
+  (`drawOrder3D`). Before, a surface added after a translucent one was hidden behind it.
 
 - **`addVolume` frames like the other 3D adders**: on `layer.bounds()` through `framingFor` (field
   of view and canvas aspect), not `Camera3D.frame`'s `max(w, h, d) × 1.8`. Same target (the
@@ -112,6 +180,12 @@ All notable changes to napari-js are documented here. The format roughly follows
 - **`tintColormap` parses with `parseColor`**, so it also takes `rgb()` and named colours. Bare hex
   without `#` still works; a partly invalid hex now gives black as a whole rather than per channel,
   and the name is always lower-case `tint-rrggbb`.
+
+### Fixed
+
+- **Iso-surface lighting**: the volume shader lit the iso-surface by the density gradient, which
+  points into the surface, so the faces toward the light got only the ambient term. It uses the
+  outward normal now. Found by the GPU tests.
 
 ## [0.13.0]
 

@@ -11,6 +11,7 @@ import {
   type PixelChunk,
   type VolumeRendering,
 } from '../src/index';
+import { SlicePlanesWidget } from '../src/overlays';
 
 // Multi-demo playground: number keys 1–5 switch demos so every render path can be
 // visually verified in a WebGPU browser. Each demo rebuilds the Viewer on the same canvas.
@@ -24,7 +25,7 @@ let cleanup: (() => void) | null = null;
 
 const DEMOS =
   '1 image · 2 multi-channel · 3 tiled+z · 4 points+labels · 5 volume · 6 surface · 7 scatter3d' +
-  ' · 8 shapes';
+  ' · 8 shapes · 9 slice planes';
 
 function status(line: string): void {
   msg.textContent = `napari-js ${VERSION} — [${DEMOS}]  ·  ${line}`;
@@ -172,10 +173,8 @@ async function demoPointsLabels(): Promise<void> {
   status('points + labels over image · click to pick');
 }
 
-async function demoVolume(): Promise<void> {
-  const v = await start({ r: 0, g: 0, b: 0, a: 1 });
-  if (!v) return;
-  const N = 96;
+/** Three gaussian blobs in an N³ uint8 volume (x fastest). */
+function blobVolume(N: number): Uint8Array {
   const data = new Uint8Array(N * N * N);
   const blobs: [number, number, number, number][] = [
     [0.35, 0.4, 0.5, 0.14],
@@ -192,6 +191,14 @@ async function demoVolume(): Promise<void> {
           );
         data[(z * N + y) * N + x] = Math.min(255, Math.round(s * 255));
       }
+  return data;
+}
+
+async function demoVolume(): Promise<void> {
+  const v = await start({ r: 0, g: 0, b: 0, a: 1 });
+  if (!v) return;
+  const N = 96;
+  const data = blobVolume(N);
   const vol = v.addVolume(data, N, N, N, {
     colormap: 'magma',
     rendering: 'mip',
@@ -205,6 +212,31 @@ async function demoVolume(): Promise<void> {
     status(`volume (${mode}) · drag = orbit, wheel = zoom, m/t/i = mode`);
   };
   status('volume (mip) · drag = orbit, wheel = zoom, m/t/i = mode');
+}
+
+async function demoSlicePlanes(): Promise<void> {
+  const v = await start({ r: 0, g: 0, b: 0, a: 1 });
+  if (!v) return;
+  const N = 96;
+  const vol = v.addVolume(blobVolume(N), N, N, N, { colormap: 'magma', rendering: 'mip' });
+  const widget = new SlicePlanesWidget(canvas.parentElement as HTMLElement, v, {
+    volume: vol,
+    snap: true,
+    linkPlane: 'z',
+  });
+  const say = () =>
+    status(
+      `slice planes · x ${widget.position('x')} y ${widget.position('y')} z ${widget.position('z')}` +
+        ` · drag a grip, p = ${vol.depiction === 'plane' ? 'whole volume' : 'z plane only'}`,
+    );
+  widget.changed.connect(say);
+  onKey = (e) => {
+    if (e.key !== 'p') return;
+    vol.depiction = vol.depiction === 'plane' ? 'volume' : 'plane';
+    say();
+  };
+  cleanup = () => widget.dispose();
+  say();
 }
 
 async function demoSurface(): Promise<void> {
@@ -337,6 +369,7 @@ const demoList: DemoDef[] = [
   { id: '6', label: '6 · Surface (3D mesh)', run: demoSurface },
   { id: '7', label: '7 · Scatter (3D points)', run: demoScatter3d },
   { id: '8', label: '8 · Shapes (polygon rings)', run: demoShapes },
+  { id: '9', label: '9 · Slice planes (3D widget)', run: demoSlicePlanes },
 ];
 
 const select = document.getElementById('demo') as HTMLSelectElement;

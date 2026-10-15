@@ -1,5 +1,5 @@
-// `napari-js/overlays`: DOM chrome drawn over the canvas — scale bar, 3D axes labels and the
-// 2D navigator (napari's viewer overlays). Each takes `(host, viewer, opts)` and has
+// `napari-js/overlays`: DOM chrome drawn over the canvas — scale bar, 3D axes labels, the
+// 2D navigator (napari's viewer overlays) and the 3D slice-plane widget. Each takes `(host, viewer, opts)` and has
 // `dispose()`. A separate entry so the main bundle stays free of DOM UI a host may not want.
 export {
   ScaleBarOverlay,
@@ -20,4 +20,18 @@ export {
   NAVIGATOR_MAX_PX,
 } from './navigator';
 export type { NavigatorOverlayOptions, NavigatorLayout } from './navigator';
+export {
+  SlicePlanesWidget,
+  volumeDataToWorld,
+  slicePlaneCorners,
+  slicePlaneGripPoint,
+  rayAxisParam,
+} from './slice-planes';
+export type {
+  SliceAxis,
+  SlicePlaneChange,
+  SlicePlanesBox,
+  SlicePlanesViewer,
+  SlicePlanesWidgetOptions,
+} from './slice-planes';
 export type { OverlayViewer } from './common';

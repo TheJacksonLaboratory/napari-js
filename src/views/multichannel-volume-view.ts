@@ -1,6 +1,8 @@
 import { VolumeLayer, type VolumeLayerOptions, type VolumeRendering } from '../layers/volume-layer';
 import type { BlendMode } from '../layers/layer';
 import { Colormap, tintColormap } from '../color/colormap';
+import type { VolumeDepiction, VolumePlane } from '../layers/volume-plane';
+import type { ClippingPlane } from '../layers/clipping';
 
 /** How a multichannel volume is composited. */
 export type VolumeMode =
@@ -38,6 +40,13 @@ export type VolumeChannelUpdate = Partial<
 
 export interface MultiChannelVolumeRenderOptions {
   rendering?: VolumeRendering;
+  /** Draw every channel whole or as {@link plane} only (see {@link VolumeLayer.depiction}). Kept
+   *  across renders until changed. */
+  depiction?: VolumeDepiction;
+  /** The plane a `'plane'` depiction shows, shared by every channel (data coordinates). */
+  plane?: VolumePlane;
+  /** Clipping planes shared by every channel (data coordinates). Kept across renders until changed. */
+  clippingPlanes?: readonly ClippingPlane[];
 }
 
 /** The slice of {@link Viewer} this view drives — satisfied by `Viewer`, trivial to fake in tests. */
@@ -68,6 +77,9 @@ export class MultiChannelVolumeView {
   private _mode: VolumeMode | null = null;
   private readonly _layers: VolumeLayer[] = [];
   private _rendering: VolumeRendering = 'mip';
+  private _depiction: VolumeDepiction = 'volume';
+  private _plane: VolumePlane | null = null;
+  private _clippingPlanes: readonly ClippingPlane[] = [];
 
   constructor(private readonly host: VolumeHost) {}
 
@@ -80,6 +92,13 @@ export class MultiChannelVolumeView {
   get rendering(): VolumeRendering {
     return this._rendering;
   }
+  get depiction(): VolumeDepiction {
+    return this._depiction;
+  }
+  /** The plane set on the view, or null (each layer's default: through the middle, normal +z). */
+  get plane(): VolumePlane | null {
+    return this._plane;
+  }
 
   /** Clear any existing volumes and build the layer set for `mode` from `channels`. Multichannel
    *  layers blend additively; grayscale uses the first channel only. Returns the new layers. */
@@ -89,6 +108,9 @@ export class MultiChannelVolumeView {
     opts: MultiChannelVolumeRenderOptions = {},
   ): VolumeLayer[] {
     if (opts.rendering) this._rendering = opts.rendering;
+    if (opts.depiction) this._depiction = opts.depiction;
+    if (opts.plane) this._plane = opts.plane;
+    if (opts.clippingPlanes) this._clippingPlanes = opts.clippingPlanes;
     const rendering = this._rendering;
     this.host.layers.clear();
     this._layers.length = 0;
@@ -103,6 +125,9 @@ export class MultiChannelVolumeView {
         invert: ch.invert ?? false,
         visible: ch.visible ?? true,
         rendering,
+        depiction: this._depiction,
+        clippingPlanes: this._clippingPlanes,
+        ...(this._plane ? { plane: this._plane } : {}),
         ...(ch.voxelSize ? { voxelSize: ch.voxelSize } : {}),
         ...(mode === 'multichannel' ? { blending: 'additive' as BlendMode } : {}),
       };
@@ -131,6 +156,29 @@ export class MultiChannelVolumeView {
   setRendering(rendering: VolumeRendering): void {
     this._rendering = rendering;
     for (const layer of this._layers) layer.rendering = rendering;
+    this.host.requestRender();
+  }
+
+  /** Show every channel whole (`'volume'`) or as the plane only (`'plane'`), optionally moving the
+   *  plane too. Live: no channel is uploaded again. */
+  setDepiction(depiction: VolumeDepiction, plane?: VolumePlane): void {
+    this._depiction = depiction;
+    if (plane) this.setPlane(plane);
+    for (const layer of this._layers) layer.depiction = depiction;
+    this.host.requestRender();
+  }
+
+  /** Move the plane every channel shows (data coordinates). Live. */
+  setPlane(plane: VolumePlane): void {
+    this._plane = plane;
+    for (const layer of this._layers) layer.plane = plane;
+    this.host.requestRender();
+  }
+
+  /** Clip every channel by these planes (data coordinates; [] clips nothing). Live. */
+  setClippingPlanes(planes: readonly ClippingPlane[]): void {
+    this._clippingPlanes = planes;
+    for (const layer of this._layers) layer.clippingPlanes = planes;
     this.host.requestRender();
   }
 

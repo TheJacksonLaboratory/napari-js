@@ -23,9 +23,13 @@ A browser-native, **WebGPU** rendering engine that ports the visualization model
 - **3D points** with per-point colormapped values plus per-point **alpha and size** — enough to mute
   a cloud and highlight a subset within a single layer and a single draw — and a `dataVersion` so
   recolouring mutates the layer instead of replacing it.
-- **3D volume raymarching** — MIP, translucent, and iso-surface, with an orbit camera.
-- **Surface** — a 3D triangular mesh (napari's `Surface` layer) with per-vertex colormapping and
-  depth-tested flat shading, plus a `heightField` helper that turns a 2D image into a surface plot.
+- **3D volume raymarching** — MIP, translucent, and iso-surface, with an orbit camera; a **plane
+  depiction** (napari's `depiction: 'plane'`) that shows one slice of the volume in 3D, and
+  **clipping planes** on volumes and surfaces.
+- **Surface** — a 3D triangular mesh (napari's `Surface` layer) with per-vertex colormapping, one
+  colour or a colour per vertex, depth-tested flat shading and in-place `setData`, plus a
+  `heightField` helper that turns a 2D image into a surface plot. **Surface picking**
+  (`viewer.pickSurface`, `canvasRay`) finds the mesh and triangle under the cursor.
 - **Shapes** — closed polygon rings in 2D (napari's `Shapes` layer, rings only) from a flat
   `coords` + `offsets` pair, drawn as 1-pixel boundaries or filled interiors and coloured by one
   scalar per shape through a colormap — sized for the 10⁵–10⁶ cell outlines a segmentation
@@ -94,7 +98,9 @@ are instances of the same classes `napari-js` exports.
 ### Overlays: `napari-js/overlays`
 
 DOM chrome over the canvas, as napari's viewer overlays: a physical scale bar (2D zoom, or the 3D
-camera at its target's depth), crisp 3D axis labels, and an OpenSeadragon-style 2D navigator. Each
+camera at its target's depth), crisp 3D axis labels, an OpenSeadragon-style 2D navigator, and
+`SlicePlanesWidget`: three orthogonal slice planes through a volume with grips that drag them along
+their axes (demo 9). Each
 takes `(host, viewer, opts)` and has `dispose()`; the main bundle does not include them.
 
 ```ts
@@ -123,7 +129,8 @@ matplotlibColormap('RdBu'); // by name, via the COLORMAP_LUTS registry (keeps ev
 Framework-free raster/vector geometry, the operations behind napari's Labels tools: scanline
 `rasterizePolygon` (with holes), `pointInRing`/`pointInPolygonWithHoles`, `labelComponents` (4/8),
 `traceContours` (outer rings + holes along pixel edges, so a mask round-trips exactly), `floodFill`
-and `autoContrastLimits` (saturation-based auto contrast, also in the main entry). Rings are flat
+and `autoContrastLimits` (saturation-based auto contrast, also in the main entry), and meshes from
+voxel masks: `surfaceNets`, `labelsToMeshes` and `smoothMesh` (Laplacian or Taubin). Rings are flat
 `[x0, y0, x1, y1, …]`; rasters are row-major `{ data, width, height }`.
 
 ```ts
@@ -140,10 +147,17 @@ const back = rasterizePolygon(blob.outer, blob.holes); // the same pixels, as a 
 npm install
 npm run dev          # serve the playground (8 demos in the dropdown — see below)
 npm test             # GPU-free unit tests (Vitest)
+npm run test:gpu     # real-GPU tests in headless Chromium (Vitest browser mode; see below)
 npm run test:coverage
 npm run typecheck && npm run lint && npm run format:check
 npm run build        # library bundle + types → dist/
 ```
+
+`npm run test:gpu` runs `test/gpu` on the machine's GPU through Playwright's Chromium (run
+`npx playwright install chromium` once). `NAPARI_GPU_SWIFTSHADER=1` uses Chromium's software
+adapter, as CI does; without an adapter the tests skip unless `NAPARI_GPU_REQUIRED=1`. Shader math
+keeps its CPU reference and GPU-free unit test; a GPU test checks the shader against that reference
+within a few levels of 255.
 
 `npm run dev` serves `index.html` → `playground/main.ts`. Pick a demo from the dropdown (or press
 its number key) to verify each render path; if WebGPU is unavailable the page shows the reason
