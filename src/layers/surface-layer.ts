@@ -3,6 +3,7 @@ import { Colormap, resolveColormap } from '../color/colormap';
 import { mapScalar } from '../color/display-pipeline';
 import { parseColor } from '../color/parse';
 import type { RGBA } from './points-layer';
+import { normalizeClippingPlanes, type ClippingPlane } from './clipping';
 
 /** How a surface is coloured; see {@link SurfaceLayer.colorMode}. */
 export type SurfaceColorMode = 'vertex' | 'color' | 'colormap';
@@ -33,6 +34,8 @@ export interface SurfaceLayerOptions {
    * {@link SurfaceLayer.vertexColors}.
    */
   vertexColors?: Float32Array;
+  /** Planes that cut the surface away (napari's `experimental_clipping_planes`). See {@link SurfaceLayer.clippingPlanes}. */
+  clippingPlanes?: readonly ClippingPlane[];
 }
 
 /** Axis-aligned bounds of a mesh, plus a center + framing radius for the 3D camera. */
@@ -83,6 +86,7 @@ export class SurfaceLayer extends Layer {
   private _values!: Float32Array;
   private _color: RGBA | null = null;
   private _vertexColors: Float32Array | null = null;
+  private _clippingPlanes: ClippingPlane[] = [];
 
   private _colormap: Colormap;
   private _contrastLimits: [number, number];
@@ -104,6 +108,7 @@ export class SurfaceLayer extends Layer {
     this._invert = opts.invert ?? false;
     this._wireframe = opts.wireframe ?? false;
     if (opts.color !== undefined) this._color = toRgba(opts.color);
+    if (opts.clippingPlanes) this._clippingPlanes = normalizeClippingPlanes(opts.clippingPlanes);
     if (opts.vertexColors !== undefined) {
       this._vertexColors = checkVertexColors(opts.vertexColors, this.vertexCount);
     }
@@ -231,6 +236,20 @@ export class SurfaceLayer extends Layer {
   set vertexColors(value: Float32Array | null) {
     this._vertexColors = value === null ? null : checkVertexColors(value, this.vertexCount);
     this.colorVersion++;
+    this.changed.emit(this);
+  }
+
+  /**
+   * Planes that cut the surface away, in its vertex coordinates: a fragment is drawn only on the
+   * side every enabled plane's normal points to (see {@link ClippingPlane}). The getter returns the
+   * enabled planes with unit normals. At most {@link MAX_CLIPPING_PLANES}; a uniform, so moving a
+   * plane re-uploads nothing. {@link pick} skips what they cut away.
+   */
+  get clippingPlanes(): ClippingPlane[] {
+    return this._clippingPlanes.map((p) => ({ position: p.position, normal: p.normal }));
+  }
+  set clippingPlanes(value: readonly ClippingPlane[]) {
+    this._clippingPlanes = normalizeClippingPlanes(value);
     this.changed.emit(this);
   }
 

@@ -6,10 +6,11 @@ import { buildLut, LUT_SIZE } from '../color/lut';
 import { SURFACE_SHADER } from './surface-shader';
 import { blendStateFor } from './blend';
 import type { Camera3D } from '../camera/camera3d';
+import { MAX_CLIPPING_PLANES } from '../layers/clipping';
 
 const VERTEX_STRIDE = SURFACE_VERTEX_FLOATS * 4; // [x,y,z,value] → 16 bytes
-/** mat4(16) + params vec4 + light vec4 + flags vec4 + color vec4. */
-export const SURFACE_UNIFORM_FLOATS = 32;
+/** mat4(16) + params vec4 + light vec4 + flags vec4 + color vec4 + 2 vec4 per clipping plane. */
+export const SURFACE_UNIFORM_FLOATS = 32 + 8 * MAX_CLIPPING_PLANES;
 /** Per-vertex colour: RGBA float32 → 16 bytes (stride 0 when the layer has none). */
 const COLOR_STRIDE = 16;
 const COLOR_MODE = { colormap: 0, color: 1, vertex: 2 } as const;
@@ -50,12 +51,19 @@ export function packSurfaceUniforms(
   out[24] = layer.wireframe ? 1 : 0;
   out[25] = layer.invert ? 1 : 0;
   out[26] = COLOR_MODE[layer.colorMode];
-  out[27] = 0;
+  const planes = layer.clippingPlanes;
+  out[27] = planes.length;
   const color = layer.color ?? [1, 1, 1, 1];
   out[28] = color[0];
   out[29] = color[1];
   out[30] = color[2];
   out[31] = color[3];
+  out.fill(0, 32, SURFACE_UNIFORM_FLOATS);
+  planes.forEach((p, i) => {
+    const o = 32 + 8 * i;
+    out.set(p.position, o);
+    out.set(p.normal, o + 4);
+  });
 }
 
 /**

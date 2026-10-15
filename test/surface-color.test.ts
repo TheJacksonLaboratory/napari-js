@@ -122,3 +122,30 @@ describe('SurfaceLayer colour', () => {
     expect(colorWrites).toBe(0);
   });
 });
+
+describe('SurfaceLayer clipping planes', () => {
+  it('normalizes the planes, emits, and packs them after the colour', () => {
+    const s = new SurfaceLayer(VERTS, FACES, undefined, {
+      clippingPlanes: [{ position: [1, 2, 3], normal: [0, 0, -2] }],
+    });
+    expect(s.clippingPlanes).toEqual([{ position: [1, 2, 3], normal: [0, 0, -1] }]);
+    let emits = 0;
+    s.changed.connect(() => emits++);
+    s.clippingPlanes = [
+      { position: [0, 0, 0], normal: [1, 0, 0] },
+      { position: [5, 5, 5], normal: [0, 1, 0], enabled: false },
+      { position: [0, 4, 0], normal: [0, -1, 0] },
+    ];
+    expect(emits).toBe(1);
+    const out = new Float32Array(SURFACE_UNIFORM_FLOATS);
+    packSurfaceUniforms(out, s, new Camera3D(), 100, 100);
+    expect(out[27]).toBe(2); // the enabled ones
+    expect(Array.from(out.subarray(32, 40))).toEqual([0, 0, 0, 0, 1, 0, 0, 0]);
+    expect(Array.from(out.subarray(40, 48))).toEqual([0, 4, 0, 0, 0, -1, 0, 0]);
+    s.clippingPlanes = [];
+    packSurfaceUniforms(out, s, new Camera3D(), 100, 100);
+    expect(out[27]).toBe(0);
+    expect(out.subarray(32).every((v) => v === 0)).toBe(true);
+    expect(uniformStructFloats(SURFACE_SHADER)).toBe(SURFACE_UNIFORM_FLOATS);
+  });
+});

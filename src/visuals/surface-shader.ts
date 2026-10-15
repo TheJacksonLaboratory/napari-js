@@ -1,14 +1,19 @@
+import { MAX_CLIPPING_PLANES } from '../layers/clipping';
+
 // Triangle-mesh surface: per-vertex scalar → windowed → invert → gamma → colormap LUT (or one
-// colour, or a colour per vertex: flags.z = 0, 1, 2), with two-sided flat shading. Normals are derived per-fragment from screen-space derivatives of world position
-// (dpdx/dpdy), so no per-vertex normals or normal matrix are needed. Premultiplied output for the
-// canvas 'premultiplied' alpha mode. Depth is written by the pipeline (see surface-visual.ts).
+// colour, or a colour per vertex: flags.z = 0, 1, 2), with two-sided flat shading, cut by up to
+// MAX_CLIPPING_PLANES clipping planes. Normals are derived per-fragment from screen-space
+// derivatives of world position (dpdx/dpdy), so no per-vertex normals or normal matrix are needed.
+// Premultiplied output for the canvas 'premultiplied' alpha mode. Depth is written by the pipeline
+// (see surface-visual.ts).
 export const SURFACE_SHADER = /* wgsl */ `
 struct U {
   mvp : mat4x4<f32>,
   params : vec4<f32>,   // lo, hi, gamma, opacity
   light : vec4<f32>,    // lightDir.xyz (world, toward viewer), ambient
-  flags : vec4<f32>,    // wireframe (0/1), invert (0/1), colour mode (0 colormap, 1 color, 2 vertex), 0
+  flags : vec4<f32>,    // wireframe (0/1), invert (0/1), colour mode (0 colormap, 1 color, 2 vertex), clipping planes
   color : vec4<f32>,    // the layer colour (colour mode 1), straight RGBA
+  planes : array<vec4<f32>, ${2 * MAX_CLIPPING_PLANES}>, // per clipping plane: position.xyz, 0; unit normal.xyz, 0
 };
 @group(0) @binding(0) var<uniform> u : U;
 @group(0) @binding(1) var lutSampler : sampler;
@@ -56,6 +61,19 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
     c = in.color;
   } else if (u.flags.z > 0.5) {
     c = u.color;
+  }
+
+  // Clipping planes (vertex coordinates): kept where dot(p - position, normal) >= 0 for every one.
+  // Tested last, so the derivatives and the LUT sample above stay in uniform control flow.
+  var clipped = false;
+  let planeCount = i32(u.flags.w);
+  for (var i = 0; i < planeCount; i++) {
+    if (dot(in.worldPos - u.planes[2 * i].xyz, u.planes[2 * i + 1].xyz) < 0.0) {
+      clipped = true;
+    }
+  }
+  if (clipped) {
+    discard;
   }
 
   let a = clamp(c.a, 0.0, 1.0) * u.params.w; // colour alpha × opacity
