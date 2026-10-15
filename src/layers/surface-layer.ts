@@ -52,18 +52,17 @@ export const SURFACE_VERTEX_FLOATS = 4;
  */
 export class SurfaceLayer extends Layer {
   readonly kind = 'surface';
-  /** N — number of vertices. */
-  readonly vertexCount: number;
-  /** 3M — length of {@link faces} (drawn with `drawIndexed`). */
-  readonly indexCount: number;
-  /** N×3 vertex positions in world/data coords, x-fastest. */
-  readonly vertices: Float32Array;
-  /** M×3 triangle indices into the vertices. */
-  readonly faces: Uint32Array;
-  /** Per-vertex scalar (length N) mapped through the colormap. */
-  readonly values: Float32Array;
 
   colormapVersion = 0;
+  /**
+   * Bumped by {@link setData}: the geometry changed and the visual re-uploads its vertex and
+   * index buffers (the layer, its GPU visual and its place in the layer list are kept).
+   */
+  dataVersion = 0;
+
+  private _vertices!: Float32Array;
+  private _faces!: Uint32Array;
+  private _values!: Float32Array;
 
   private _colormap: Colormap;
   private _contrastLimits: [number, number];
@@ -78,6 +77,52 @@ export class SurfaceLayer extends Layer {
     opts: SurfaceLayerOptions = {},
   ) {
     super({ name: opts.name });
+    this.assign(vertices, faces, values);
+    this._colormap = resolveColormap(opts.colormap ?? 'viridis');
+    this._contrastLimits = opts.contrastLimits ?? valueRange(this._values);
+    this._gamma = opts.gamma ?? 1;
+    this._invert = opts.invert ?? false;
+    this._wireframe = opts.wireframe ?? false;
+    this._blending = opts.blending ?? 'opaque';
+    if (opts.opacity !== undefined) this._opacity = opts.opacity;
+    if (opts.visible !== undefined) this._visible = opts.visible;
+  }
+
+  /** N×3 vertex positions in world/data coords, x-fastest. */
+  get vertices(): Float32Array {
+    return this._vertices;
+  }
+  /** M×3 triangle indices into the vertices. */
+  get faces(): Uint32Array {
+    return this._faces;
+  }
+  /** Per-vertex scalar (length N) mapped through the colormap. */
+  get values(): Float32Array {
+    return this._values;
+  }
+  /** N — number of vertices. */
+  get vertexCount(): number {
+    return this._vertices.length / 3;
+  }
+  /** 3M — length of {@link faces} (drawn with `drawIndexed`). */
+  get indexCount(): number {
+    return this._faces.length;
+  }
+
+  /**
+   * Replace the mesh in place: the layer keeps its id, style and place in the layer list, and its
+   * GPU visual re-uploads the buffers on the next frame — no remove and re-add. `values` default to
+   * each vertex's z, as in the constructor; the contrast limits are kept. Throws, changing nothing,
+   * on the constructor's length errors.
+   */
+  setData(vertices: Float32Array, faces: Uint32Array, values?: Float32Array): void {
+    this.assign(vertices, faces, values);
+    this.dataVersion++;
+    this.changed.emit(this);
+  }
+
+  /** Validate and take the geometry (all or nothing). */
+  private assign(vertices: Float32Array, faces: Uint32Array, values?: Float32Array): void {
     if (vertices.length % 3 !== 0) {
       throw new Error(`Surface vertices length (${vertices.length}) must be a multiple of 3.`);
     }
@@ -89,19 +134,9 @@ export class SurfaceLayer extends Layer {
     if (vals.length !== n) {
       throw new Error(`Surface values length (${vals.length}) must equal vertex count (${n}).`);
     }
-    this.vertices = vertices;
-    this.faces = faces;
-    this.values = vals;
-    this.vertexCount = n;
-    this.indexCount = faces.length;
-    this._colormap = resolveColormap(opts.colormap ?? 'viridis');
-    this._contrastLimits = opts.contrastLimits ?? valueRange(vals);
-    this._gamma = opts.gamma ?? 1;
-    this._invert = opts.invert ?? false;
-    this._wireframe = opts.wireframe ?? false;
-    this._blending = opts.blending ?? 'opaque';
-    if (opts.opacity !== undefined) this._opacity = opts.opacity;
-    if (opts.visible !== undefined) this._visible = opts.visible;
+    this._vertices = vertices;
+    this._faces = faces;
+    this._values = vals;
   }
 
   get colormap(): Colormap {

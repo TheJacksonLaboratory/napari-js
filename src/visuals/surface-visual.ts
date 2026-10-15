@@ -52,8 +52,9 @@ export function packSurfaceUniforms(
 
 /**
  * Renders a {@link SurfaceLayer} as an indexed triangle mesh (see surface-shader.ts). Uploads the
- * interleaved position+value vertex buffer and the face index buffer once (the mesh is immutable);
- * only the LUT and blend pipeline are rebuilt reactively. Uses depth testing (the renderer attaches
+ * interleaved position+value vertex buffer and the face index buffer, again only when the layer's
+ * `dataVersion` moves ({@link SurfaceLayer.setData}); the LUT and blend pipeline are rebuilt
+ * reactively. Uses depth testing (the renderer attaches
  * a depth buffer for 3D passes) so the mesh self-occludes correctly under the orbit camera.
  */
 export class SurfaceVisual implements LayerVisual {
@@ -62,13 +63,14 @@ export class SurfaceVisual implements LayerVisual {
   private readonly module: GPUShaderModule;
   private readonly uniformBuffer: GPUBuffer;
   private readonly scratch = new Float32Array(SURFACE_UNIFORM_FLOATS);
-  private readonly vertexBuffer: GPUBuffer;
-  private readonly indexBuffer: GPUBuffer;
-  private readonly edgeBuffer: GPUBuffer;
+  private vertexBuffer: GPUBuffer | undefined;
+  private indexBuffer: GPUBuffer | undefined;
+  private edgeBuffer: GPUBuffer | undefined;
   private readonly lutTexture: GPUTexture;
   private readonly lutSampler: GPUSampler;
-  private readonly indexCount: number;
-  private readonly edgeCount: number;
+  private indexCount = 0;
+  private edgeCount = 0;
+  private dataVersion: number;
   private bindGroup: GPUBindGroup;
   private pipeline: GPURenderPipeline;
   private currentBlend: BlendMode;
@@ -86,35 +88,8 @@ export class SurfaceVisual implements LayerVisual {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    const verts = layer.buildVertexData();
-    this.vertexBuffer = device.createBuffer({
-      size: Math.max(VERTEX_STRIDE, verts.byteLength),
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    });
-    if (verts.byteLength > 0) {
-      device.queue.writeBuffer(this.vertexBuffer, 0, verts as GPUAllowSharedBufferSource);
-    }
-
-    // Index buffers must be a multiple of 4 bytes; uint32 indices already satisfy that.
-    this.indexCount = layer.indexCount;
-    this.indexBuffer = device.createBuffer({
-      size: Math.max(4, layer.faces.byteLength),
-      usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
-    });
-    if (layer.faces.byteLength > 0) {
-      device.queue.writeBuffer(this.indexBuffer, 0, layer.faces as GPUAllowSharedBufferSource);
-    }
-
-    // Wireframe edge index buffer (line-list of the triangle edges).
-    const edges = layer.buildEdgeIndices();
-    this.edgeCount = edges.length;
-    this.edgeBuffer = device.createBuffer({
-      size: Math.max(4, edges.byteLength),
-      usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
-    });
-    if (edges.byteLength > 0) {
-      device.queue.writeBuffer(this.edgeBuffer, 0, edges as GPUAllowSharedBufferSource);
-    }
+    this.uploadGeometry();
+    this.dataVersion = layer.dataVersion;
 
     this.lutTexture = device.createTexture({
       size: [LUT_SIZE, 1],
@@ -129,6 +104,43 @@ export class SurfaceVisual implements LayerVisual {
     this.currentWireframe = layer.wireframe;
     this.pipeline = this.buildPipeline(layer.blending, layer.wireframe);
     this.bindGroup = this.buildBindGroup();
+  }
+
+  /**
+   * Write `data` into `buffer`, made (or replaced) when missing or too small; returns the buffer.
+   * At least 16 bytes, so an empty mesh still binds a valid buffer.
+   */
+  private fill(
+    buffer: GPUBuffer | undefined,
+    data: ArrayBufferView,
+    usage: GPUBufferUsageFlags,
+  ): GPUBuffer {
+    if (!buffer || data.byteLength > buffer.size) {
+      buffer?.destroy();
+      buffer = this.device.createBuffer({
+        size: Math.max(16, data.byteLength),
+        usage: usage | GPUBufferUsage.COPY_DST,
+      });
+    }
+    if (data.byteLength > 0) {
+      this.device.queue.writeBuffer(buffer, 0, data as GPUAllowSharedBufferSource);
+    }
+    return buffer;
+  }
+
+  /** Upload the vertices, the faces and the wireframe edges (uint32 indices: 4-byte aligned). */
+  private uploadGeometry(): void {
+    const layer = this.layer;
+    this.vertexBuffer = this.fill(
+      this.vertexBuffer,
+      layer.buildVertexData(),
+      GPUBufferUsage.VERTEX,
+    );
+    this.indexBuffer = this.fill(this.indexBuffer, layer.faces, GPUBufferUsage.INDEX);
+    this.indexCount = layer.indexCount;
+    const edges = layer.buildEdgeIndices();
+    this.edgeBuffer = this.fill(this.edgeBuffer, edges, GPUBufferUsage.INDEX);
+    this.edgeCount = edges.length;
   }
 
   private buildPipeline(blend: BlendMode, wireframe: boolean): GPURenderPipeline {
@@ -192,6 +204,10 @@ export class SurfaceVisual implements LayerVisual {
       this.lutVersion = this.layer.colormapVersion;
       this.writeLut();
     }
+    if (this.layer.dataVersion !== this.dataVersion) {
+      this.dataVersion = this.layer.dataVersion;
+      this.uploadGeometry();
+    }
   }
 
   draw(pass: GPURenderPassEncoder, view: RenderView): void {
@@ -203,15 +219,15 @@ export class SurfaceVisual implements LayerVisual {
 
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this.bindGroup);
-    pass.setVertexBuffer(0, this.vertexBuffer);
-    pass.setIndexBuffer(wireframe ? this.edgeBuffer : this.indexBuffer, 'uint32');
+    pass.setVertexBuffer(0, this.vertexBuffer!);
+    pass.setIndexBuffer((wireframe ? this.edgeBuffer : this.indexBuffer)!, 'uint32');
     pass.drawIndexed(count);
   }
 
   dispose(): void {
-    this.vertexBuffer.destroy();
-    this.indexBuffer.destroy();
-    this.edgeBuffer.destroy();
+    this.vertexBuffer?.destroy();
+    this.indexBuffer?.destroy();
+    this.edgeBuffer?.destroy();
     this.lutTexture.destroy();
     this.uniformBuffer.destroy();
   }
