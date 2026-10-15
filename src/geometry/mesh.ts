@@ -17,7 +17,7 @@ export type VolumeShape = readonly [number, number, number];
 export interface SurfaceNetsOptions {
   /** World size of one voxel per axis (as `VolumeLayer.voxelSize`). Default `[1, 1, 1]`. */
   voxelSize?: readonly [number, number, number];
-  /** World position of voxel coordinate 0 (the corner of voxel 0). Default `[0, 0, 0]`. */
+  /** World position of voxel 0's centre. Default `[0, 0, 0]`. */
   origin?: readonly [number, number, number];
   /** A voxel is inside when its value is above `level`. Default 0 (non-zero is inside). */
   level?: number;
@@ -42,8 +42,10 @@ export interface SmoothOptions {
  * triangles) per pair of neighbouring voxels the boundary separates. Smoother than marching cubes'
  * staircase at the same resolution, and closed even where the mask touches the volume's edge.
  *
- * Coordinates: voxel `i` spans `[i, i + 1)` on its axis (its centre is `i + 0.5`), mapped to world
- * by `origin + voxelSize · v`. Faces wind counter-clockwise seen from outside (outward normals: a
+ * Coordinates: data coordinates as napari and {@link VolumeLayer}'s `plane`/`clippingPlanes` use
+ * them, voxel `i` centred on `i` (spanning `[i − 0.5, i + 0.5)`), mapped to world by
+ * `origin + voxelSize · v`: a mesh lines up with the volume it was cut from, and the volume's
+ * planes clip both alike. (Pass `origin: [0.5, 0.5, 0.5]` for voxel `i` spanning `[i, i + 1)`.) Faces wind counter-clockwise seen from outside (outward normals: a
  * positive signed volume). An empty or full-free mask gives an empty mesh.
  */
 export function surfaceNets(
@@ -249,7 +251,11 @@ function nets(
   opts: SurfaceNetsOptions,
 ): Mesh {
   const [vx, vy, vz] = opts.voxelSize ?? [1, 1, 1];
-  const [ox, oy, oz] = opts.origin ?? [0, 0, 0];
+  // Below, voxel i spans [i, i + 1); shifted by half a voxel, it is centred on i.
+  const [ox0, oy0, oz0] = opts.origin ?? [0, 0, 0];
+  const ox = ox0 - vx / 2,
+    oy = oy0 - vy / 2,
+    oz = oz0 - vz / 2;
   const px = nx + 2,
     pxy = px * (ny + 2);
   const cx = nx + 1,

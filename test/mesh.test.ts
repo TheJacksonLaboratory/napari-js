@@ -109,13 +109,13 @@ describe('surfaceNets', () => {
   });
 
   it('places a box’s faces on its voxels’ outer edges', () => {
-    // Voxels 2..5 on each axis span [2, 6).
+    // Voxels 2..5 on each axis, centred on 2..5, span [1.5, 5.5).
     const m = surfaceNets(
       volume([8, 8, 8], (x, y, z) => x >= 2 && x < 6 && y >= 2 && y < 6 && z >= 2 && z < 6),
       [8, 8, 8],
     );
     expect(closedAndConsistent(m)).toBe(true);
-    expect(bounds(m)).toEqual([2, 2, 2, 6, 6, 6]);
+    expect(bounds(m)).toEqual([1.5, 1.5, 1.5, 5.5, 5.5, 5.5]);
     expect(signedVolume(m)).toBeGreaterThan(0);
     expect(signedVolume(m)).toBeLessThan(64); // corners and edges are bevelled
   });
@@ -123,7 +123,17 @@ describe('surfaceNets', () => {
   it('closes a mask that touches the volume’s edge', () => {
     const m = surfaceNets(new Uint8Array(4 * 3 * 2).fill(1), [4, 3, 2]);
     expect(closedAndConsistent(m)).toBe(true);
-    expect(bounds(m)).toEqual([0, 0, 0, 4, 3, 2]);
+    expect(bounds(m)).toEqual([-0.5, -0.5, -0.5, 3.5, 2.5, 1.5]);
+  });
+
+  it('lines up with the volume: voxel i centred on i, as VolumeLayer planes and clipping use', () => {
+    // One voxel at (3, 1, 2): its mesh is centred there; origin [0.5, 0.5, 0.5] gives [i, i + 1).
+    const one = volume([6, 4, 4], (x, y, z) => x === 3 && y === 1 && z === 2);
+    const b = bounds(surfaceNets(one, [6, 4, 4]));
+    const centre = [(b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2];
+    centre.forEach((v, i) => expect(v).toBeCloseTo([3, 1, 2][i], 6));
+    const shifted = bounds(surfaceNets(one, [6, 4, 4], { origin: [0.5, 0.5, 0.5] }));
+    shifted.forEach((v, i) => expect(v - b[i]).toBeCloseTo(0.5, 6));
   });
 
   it('gives an empty mesh for an empty mask, and refuses a mask smaller than its shape', () => {
