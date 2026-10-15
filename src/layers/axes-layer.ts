@@ -21,7 +21,8 @@ export interface AxesLayerOptions {
   colors?: AxesColors;
 }
 
-const DEFAULT_COLORS: AxesColors = {
+/** The axes' colours (x red, y green, z blue), shared by the slice-plane widget. */
+export const DEFAULT_AXES_COLORS: Readonly<AxesColors> = {
   x: [0.93, 0.27, 0.27],
   y: [0.3, 0.85, 0.35],
   z: [0.4, 0.55, 1.0],
@@ -57,7 +58,7 @@ export class AxesLayer extends Layer {
     this._voxelSize = opts.voxelSize ?? [1, 1, 1];
     this._tickCount = opts.tickCount ?? 5;
     this._boundingBox = opts.boundingBox ?? true;
-    this.colors = opts.colors ?? DEFAULT_COLORS;
+    this.colors = opts.colors ?? DEFAULT_AXES_COLORS;
     if (opts.visible !== undefined) this._visible = opts.visible;
   }
 

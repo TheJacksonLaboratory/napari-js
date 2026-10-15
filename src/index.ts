@@ -67,7 +67,7 @@ export type {
   VolumePlane,
   VolumeSlice,
 } from './layers/volume-plane';
-export { AxesLayer, axesLineVertices } from './layers/axes-layer';
+export { AxesLayer, axesLineVertices, DEFAULT_AXES_COLORS } from './layers/axes-layer';
 export type { AxesLayerOptions, AxesColors } from './layers/axes-layer';
 export { SurfaceLayer, heightField } from './layers/surface-layer';
 export type {
