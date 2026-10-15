@@ -8,8 +8,11 @@ import { blendStateFor } from './blend';
 import type { Camera3D } from '../camera/camera3d';
 
 const VERTEX_STRIDE = SURFACE_VERTEX_FLOATS * 4; // [x,y,z,value] → 16 bytes
-/** mat4(16) + params vec4 + light vec4 + flags vec4. */
-export const SURFACE_UNIFORM_FLOATS = 28;
+/** mat4(16) + params vec4 + light vec4 + flags vec4 + color vec4. */
+export const SURFACE_UNIFORM_FLOATS = 32;
+/** Per-vertex colour: RGBA float32 → 16 bytes (stride 0 when the layer has none). */
+const COLOR_STRIDE = 16;
+const COLOR_MODE = { colormap: 0, color: 1, vertex: 2 } as const;
 const UNIFORM_BYTES = SURFACE_UNIFORM_FLOATS * 4;
 const AMBIENT = 0.35;
 
@@ -46,8 +49,13 @@ export function packSurfaceUniforms(
   out[23] = AMBIENT;
   out[24] = layer.wireframe ? 1 : 0;
   out[25] = layer.invert ? 1 : 0;
-  out[26] = 0;
+  out[26] = COLOR_MODE[layer.colorMode];
   out[27] = 0;
+  const color = layer.color ?? [1, 1, 1, 1];
+  out[28] = color[0];
+  out[29] = color[1];
+  out[30] = color[2];
+  out[31] = color[3];
 }
 
 /**
@@ -66,6 +74,11 @@ export class SurfaceVisual implements LayerVisual {
   private vertexBuffer: GPUBuffer | undefined;
   private indexBuffer: GPUBuffer | undefined;
   private edgeBuffer: GPUBuffer | undefined;
+  /** Per-vertex colours, or one dummy element read by every vertex (stride 0). */
+  private colorBuffer: GPUBuffer | undefined;
+  /** Whether the pipeline reads {@link colorBuffer} per vertex. */
+  private currentVertexColors: boolean;
+  private colorVersion: number;
   private readonly lutTexture: GPUTexture;
   private readonly lutSampler: GPUSampler;
   private indexCount = 0;
@@ -90,6 +103,8 @@ export class SurfaceVisual implements LayerVisual {
 
     this.uploadGeometry();
     this.dataVersion = layer.dataVersion;
+    this.uploadColors();
+    this.colorVersion = layer.colorVersion;
 
     this.lutTexture = device.createTexture({
       size: [LUT_SIZE, 1],
@@ -102,7 +117,8 @@ export class SurfaceVisual implements LayerVisual {
 
     this.currentBlend = layer.blending;
     this.currentWireframe = layer.wireframe;
-    this.pipeline = this.buildPipeline(layer.blending, layer.wireframe);
+    this.currentVertexColors = layer.vertexColors !== null;
+    this.pipeline = this.buildPipeline(layer.blending, layer.wireframe, this.currentVertexColors);
     this.bindGroup = this.buildBindGroup();
   }
 
@@ -143,7 +159,17 @@ export class SurfaceVisual implements LayerVisual {
     this.edgeCount = edges.length;
   }
 
-  private buildPipeline(blend: BlendMode, wireframe: boolean): GPURenderPipeline {
+  /** Upload the per-vertex colours, or the one dummy colour every vertex reads without them. */
+  private uploadColors(): void {
+    const colors = this.layer.vertexColors ?? new Float32Array(4);
+    this.colorBuffer = this.fill(this.colorBuffer, colors, GPUBufferUsage.VERTEX);
+  }
+
+  private buildPipeline(
+    blend: BlendMode,
+    wireframe: boolean,
+    vertexColors: boolean,
+  ): GPURenderPipeline {
     return this.device.createRenderPipeline({
       layout: 'auto',
       vertex: {
@@ -156,6 +182,10 @@ export class SurfaceVisual implements LayerVisual {
               { shaderLocation: 0, offset: 0, format: 'float32x3' }, // position
               { shaderLocation: 1, offset: 12, format: 'float32' }, // value
             ],
+          },
+          {
+            arrayStride: vertexColors ? COLOR_STRIDE : 0,
+            attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x4' }], // colour
           },
         ],
       },
@@ -191,13 +221,16 @@ export class SurfaceVisual implements LayerVisual {
   }
 
   sync(): void {
+    const vertexColors = this.layer.vertexColors !== null;
     if (
       this.layer.blending !== this.currentBlend ||
-      this.layer.wireframe !== this.currentWireframe
+      this.layer.wireframe !== this.currentWireframe ||
+      vertexColors !== this.currentVertexColors
     ) {
       this.currentBlend = this.layer.blending;
       this.currentWireframe = this.layer.wireframe;
-      this.pipeline = this.buildPipeline(this.currentBlend, this.currentWireframe);
+      this.currentVertexColors = vertexColors;
+      this.pipeline = this.buildPipeline(this.currentBlend, this.currentWireframe, vertexColors);
       this.bindGroup = this.buildBindGroup();
     }
     if (this.layer.colormapVersion !== this.lutVersion) {
@@ -207,6 +240,10 @@ export class SurfaceVisual implements LayerVisual {
     if (this.layer.dataVersion !== this.dataVersion) {
       this.dataVersion = this.layer.dataVersion;
       this.uploadGeometry();
+    }
+    if (this.layer.colorVersion !== this.colorVersion) {
+      this.colorVersion = this.layer.colorVersion;
+      this.uploadColors();
     }
   }
 
@@ -220,6 +257,7 @@ export class SurfaceVisual implements LayerVisual {
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this.bindGroup);
     pass.setVertexBuffer(0, this.vertexBuffer!);
+    pass.setVertexBuffer(1, this.colorBuffer!);
     pass.setIndexBuffer((wireframe ? this.edgeBuffer : this.indexBuffer)!, 'uint32');
     pass.drawIndexed(count);
   }
@@ -228,6 +266,7 @@ export class SurfaceVisual implements LayerVisual {
     this.vertexBuffer?.destroy();
     this.indexBuffer?.destroy();
     this.edgeBuffer?.destroy();
+    this.colorBuffer?.destroy();
     this.lutTexture.destroy();
     this.uniformBuffer.destroy();
   }

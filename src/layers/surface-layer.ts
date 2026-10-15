@@ -1,5 +1,11 @@
 import { Layer, type BlendMode, type Fit3D } from './layer';
 import { Colormap, resolveColormap } from '../color/colormap';
+import { mapScalar } from '../color/display-pipeline';
+import { parseColor } from '../color/parse';
+import type { RGBA } from './points-layer';
+
+/** How a surface is coloured; see {@link SurfaceLayer.colorMode}. */
+export type SurfaceColorMode = 'vertex' | 'color' | 'colormap';
 
 export interface SurfaceLayerOptions {
   /** Whether adding this layer frames the orbit camera; overrides the viewer's default. */
@@ -17,6 +23,16 @@ export interface SurfaceLayerOptions {
   visible?: boolean;
   /** Render as a wireframe (triangle edges as lines) instead of a filled, shaded surface. */
   wireframe?: boolean;
+  /**
+   * One colour for the whole surface: a CSS colour or RGBA (0..1). Wins over `values` and the
+   * colormap. See {@link SurfaceLayer.color}.
+   */
+  color?: string | RGBA;
+  /**
+   * A colour per vertex, packed RGBA (0..1), length 4N. Wins over {@link color} and `values`. See
+   * {@link SurfaceLayer.vertexColors}.
+   */
+  vertexColors?: Float32Array;
 }
 
 /** Axis-aligned bounds of a mesh, plus a center + framing radius for the 3D camera. */
@@ -54,6 +70,8 @@ export class SurfaceLayer extends Layer {
   readonly kind = 'surface';
 
   colormapVersion = 0;
+  /** Bumped when {@link vertexColors} change (the visual re-uploads them, nothing else). */
+  colorVersion = 0;
   /**
    * Bumped by {@link setData}: the geometry changed and the visual re-uploads its vertex and
    * index buffers (the layer, its GPU visual and its place in the layer list are kept).
@@ -63,6 +81,8 @@ export class SurfaceLayer extends Layer {
   private _vertices!: Float32Array;
   private _faces!: Uint32Array;
   private _values!: Float32Array;
+  private _color: RGBA | null = null;
+  private _vertexColors: Float32Array | null = null;
 
   private _colormap: Colormap;
   private _contrastLimits: [number, number];
@@ -83,6 +103,10 @@ export class SurfaceLayer extends Layer {
     this._gamma = opts.gamma ?? 1;
     this._invert = opts.invert ?? false;
     this._wireframe = opts.wireframe ?? false;
+    if (opts.color !== undefined) this._color = toRgba(opts.color);
+    if (opts.vertexColors !== undefined) {
+      this._vertexColors = checkVertexColors(opts.vertexColors, this.vertexCount);
+    }
     this._blending = opts.blending ?? 'opaque';
     if (opts.opacity !== undefined) this._opacity = opts.opacity;
     if (opts.visible !== undefined) this._visible = opts.visible;
@@ -117,6 +141,11 @@ export class SurfaceLayer extends Layer {
    */
   setData(vertices: Float32Array, faces: Uint32Array, values?: Float32Array): void {
     this.assign(vertices, faces, values);
+    // Per-vertex colours belong to the old vertices unless they still fit (set them again after).
+    if (this._vertexColors && this._vertexColors.length !== this.vertexCount * 4) {
+      this._vertexColors = null;
+      this.colorVersion++;
+    }
     this.dataVersion++;
     this.changed.emit(this);
   }
@@ -175,6 +204,59 @@ export class SurfaceLayer extends Layer {
   set gamma(value: number) {
     this._gamma = value > 0 ? value : this._gamma;
     this.changed.emit(this);
+  }
+
+  /**
+   * One colour for the whole surface (RGBA 0..1), or null to colour by `values` through the
+   * colormap. Set a CSS colour or RGBA; a uniform, so recolouring re-uploads nothing. The alpha
+   * multiplies {@link opacity}. {@link vertexColors}, when set, win over it.
+   */
+  get color(): RGBA | null {
+    return this._color ? [...this._color] : null;
+  }
+  set color(value: string | RGBA | null) {
+    this._color = value === null ? null : toRgba(value);
+    this.changed.emit(this);
+  }
+
+  /**
+   * A colour per vertex, packed RGBA (0..1, length 4N, `[r0, g0, b0, a0, r1, …]`, the layout of
+   * {@link PointsLayer.faceColor}), interpolated across each face; or null. Wins over {@link color}
+   * and `values`. Setting it re-uploads only the colours. {@link setData} drops colours that no
+   * longer match the vertex count.
+   */
+  get vertexColors(): Float32Array | null {
+    return this._vertexColors;
+  }
+  set vertexColors(value: Float32Array | null) {
+    this._vertexColors = value === null ? null : checkVertexColors(value, this.vertexCount);
+    this.colorVersion++;
+    this.changed.emit(this);
+  }
+
+  /** What colours the surface: per-vertex colours, one {@link color}, or `values` and the colormap. */
+  get colorMode(): SurfaceColorMode {
+    return this._vertexColors ? 'vertex' : this._color ? 'color' : 'colormap';
+  }
+
+  /**
+   * The colour vertex `i` is drawn with, before shading and {@link opacity} (RGBA 0..1): the CPU
+   * reference for the shader. Under the colormap, `values[i]` windowed, inverted and
+   * gamma-corrected through it ({@link mapScalar}), alpha 1.
+   */
+  colorAt(i: number): RGBA {
+    const vc = this._vertexColors;
+    if (vc) return [vc[i * 4], vc[i * 4 + 1], vc[i * 4 + 2], vc[i * 4 + 3]];
+    if (this._color) return [...this._color];
+    const [lo, hi] = this._contrastLimits;
+    const [r, g, b] = mapScalar(this._values[i], {
+      climLo: lo,
+      climHi: hi,
+      gamma: this._gamma,
+      invert: this._invert,
+      colormap: this._colormap,
+    });
+    return [r, g, b, 1];
   }
 
   /** Render as a wireframe (edges only) vs a filled, shaded surface. Live — no geometry rebuild. */
@@ -342,6 +424,23 @@ function centerVerticesInPlace(vertices: Float32Array): void {
     vertices[i + 1] -= cy;
     vertices[i + 2] -= cz;
   }
+}
+
+/** A CSS colour or RGBA (0..1) as RGBA; throws for a colour that does not parse. */
+function toRgba(color: string | RGBA): RGBA {
+  if (typeof color !== 'string') return [color[0], color[1], color[2], color[3] ?? 1];
+  const rgba = parseColor(color);
+  if (!rgba) throw new Error(`Surface color "${color}" is not a colour.`);
+  return rgba;
+}
+
+function checkVertexColors(colors: Float32Array, n: number): Float32Array {
+  if (colors.length !== n * 4) {
+    throw new Error(
+      `Surface vertexColors length (${colors.length}) must equal 4 × vertex count (${n * 4}).`,
+    );
+  }
+  return colors;
 }
 
 /** Default per-vertex values = each vertex's z, so a bare mesh colors by height. */
