@@ -25,12 +25,19 @@ export interface RenderView {
   /** Current z-slice (2D stacks). */
   z: number;
   ndisplay: 2 | 3;
+  /**
+   * 3D: whether nothing has written the frame's depth yet (set by the renderer per visual). A
+   * volume then writes its depth in the same draw as its colour; otherwise it keeps the nearer.
+   */
+  depthClear?: boolean;
 }
 
 /** A GPU renderer for one layer. The renderer draws only visuals whose `ndisplay` matches. */
 export interface LayerVisual {
   /** Display dimensionality this visual renders in (2 for image/points/labels, 3 for volume). */
   readonly ndisplay: 2 | 3;
+  /** False when its draws never write depth (see {@link RenderView.depthClear}); default true. */
+  readonly writesDepth?: boolean;
   /** Reconcile GPU state with the layer's current display properties (cheap; pre-draw). */
   sync(): void;
   /** Encode draws for the given view. */

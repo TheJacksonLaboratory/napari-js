@@ -64,10 +64,23 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
   return shadeSurface(in);
 }
 
-// The depth pass of a translucent surface: its depth only, where it is not clipped away.
+// The alpha a fragment is drawn with: its colour's (colour mode 1 or 2; a colormap's is opaque)
+// times the layer opacity. Shared by the colour and the depth pass, so they agree on what shows.
+fn fragmentAlpha(in : VSOut) -> f32 {
+  var a = 1.0;
+  if (u.flags.z > 1.5) {
+    a = in.color.a;
+  } else if (u.flags.z > 0.5) {
+    a = u.color.a;
+  }
+  return clamp(a, 0.0, 1.0) * u.params.w;
+}
+
+// The depth pass of a translucent surface: its depth only, where it shows (not clipped away, not
+// fully transparent: a transparent part must not hide the mesh behind it).
 @fragment
 fn fsDepth(in : VSOut) {
-  if (clippedAway(in.worldPos)) {
+  if (clippedAway(in.worldPos) || fragmentAlpha(in) <= 0.0) {
     discard;
   }
 }
@@ -113,7 +126,7 @@ fn shadeSurface(in : VSOut) -> vec4<f32> {
     discard;
   }
 
-  let a = clamp(c.a, 0.0, 1.0) * u.params.w; // colour alpha × opacity
+  let a = fragmentAlpha(in);                // colour alpha × opacity
   return vec4<f32>(c.rgb * shade * a, a);    // premultiplied
 }
 `;

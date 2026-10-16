@@ -37,6 +37,30 @@ describeGpu('A volume and the surfaces inside it, by depth', () => {
     viewer.camera3d.elevation = 0;
   };
 
+  it("keeps the nearest channel's depth: a farther channel drawn after it does not undo its occlusion", async () => {
+    // Two additive channels, a bright slab near the camera and one far from it, the quad between.
+    const near = viewer.addVolume(slab(N - 7, N - 3), N, N, N, {
+      rendering: 'mip',
+      colormap: 'gray',
+      blending: 'additive',
+    });
+    viewer.addVolume(slab(2, 6), N, N, N, {
+      rendering: 'mip',
+      colormap: 'gray',
+      blending: 'additive',
+    });
+    addQuad(viewer);
+    faceOn();
+    const [r, g] = pixel(await viewer.readDisplayedPixels(), C, C);
+    expect(Math.abs(r - g)).toBeLessThanOrEqual(4);
+    expect(g).toBeGreaterThan(200);
+    // The other order: the near channel drawn last.
+    viewer.layers.move(near, 1);
+    const [r2, g2] = pixel(await viewer.readDisplayedPixels(), C, C);
+    expect(Math.abs(r2 - g2)).toBeLessThanOrEqual(4);
+    expect(g2).toBeGreaterThan(200);
+  });
+
   for (const rendering of ['mip', 'iso', 'translucent'] as const) {
     it(`${rendering}: a surface in front of what the volume shows is drawn over it; behind, hidden`, async () => {
       // The bright slab far from the camera: the quad is in front of it.

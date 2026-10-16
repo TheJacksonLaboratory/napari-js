@@ -189,7 +189,9 @@ mu })` is Laplacian smoothing, or Taubin with `mu` (keeps the volume). Pure; wor
   less transparent of the two. A filled translucent surface is now drawn by its nearest layer: its
   depth alone into a depth texture of its own, then its colour where it is that layer, blended over
   what is behind it. It still writes no depth to the scene, so a translucent surface inside another
-  (a region inside its parent) shows through it.
+  (a region inside its parent) shows through it. It keeps its place in the far-to-near order of
+  the translucent surfaces (wireframes included), and a fully transparent part of it (vertex alpha
+  0) is not its nearest layer: the mesh behind it shows.
 
 - **A volume and the surfaces inside it are drawn by depth.** The volume, a full-screen raymarch,
   wrote no depth, so every surface drawn with it (a region's reconstruction, a slice plane) showed
@@ -197,7 +199,8 @@ mu })` is Laplacian smoothing, or Taubin with `mu` (keeps the volume). Pure; wor
   the volume now writes the depth of what it shows, as napari's (vispy's) does: MIP at its
   brightest sample, iso at the surface it hits, translucent at the opacity-weighted depth of what it
   composited. A surface or point behind that is hidden; one in front is drawn over the volume.
-  Volumes are still not depth-tested against each other, so added channels stay whole.
+  Volumes' colours are still not depth-tested against each other, so added channels stay whole; the
+  depth kept is the nearest of them, whatever order the channels are drawn in.
 
 - **Iso-surface lighting**: the volume shader lit the iso-surface by the density gradient, which
   points into the surface, so the faces toward the light got only the ambient term. It uses the

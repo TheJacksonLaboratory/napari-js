@@ -138,39 +138,45 @@ export class Renderer {
       ndisplay: inputs.ndisplay,
     };
     const encoder = this.device.createCommandEncoder();
+    const is3d = rv.ndisplay === 3;
+    const depth = is3d ? this.ensureDepth(pxWidth, pxHeight) : undefined;
     // 3D layers (surface meshes) need depth testing; 2D passes have no depth attachment so their
-    // pipelines (which declare no depthStencil) stay compatible.
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [{ view, clearValue: background, loadOp: 'clear', storeOp: 'store' }],
-      depthStencilAttachment:
-        rv.ndisplay === 3
+    // pipelines (which declare no depthStencil) stay compatible. The first pass clears; a pass
+    // begun again after a translucent surface's own passes (below) loads what is there.
+    let cleared = false;
+    const begin = (): GPURenderPassEncoder => {
+      const load = cleared;
+      cleared = true;
+      return encoder.beginRenderPass({
+        colorAttachments: [
+          { view, clearValue: background, loadOp: load ? 'load' : 'clear', storeOp: 'store' },
+        ],
+        depthStencilAttachment: depth
           ? {
-              view: this.ensureDepth(pxWidth, pxHeight),
+              view: depth,
               depthClearValue: 1,
-              depthLoadOp: 'clear',
+              depthLoadOp: load ? 'load' : 'clear',
               depthStoreOp: 'store',
             }
           : undefined,
-    });
-    const ordered = rv.ndisplay === 3 ? drawOrder3D(layers, rv.camera3d.eye()) : layers;
-    // Translucent surfaces drawn by their nearest layer, after the rest (they are last already).
-    const nearest: LayerVisual[] = [];
+      });
+    };
+    let pass: GPURenderPassEncoder | null = begin();
+    rv.depthClear = true;
+    const ordered = is3d ? drawOrder3D(layers, rv.camera3d.eye()) : layers;
     for (const layer of ordered) {
       if (!layer.visible) continue;
       const visual = this.visuals.get(layer.id);
       if (!visual || visual.ndisplay !== rv.ndisplay) continue;
       visual.sync();
-      if (rv.ndisplay === 3 && visual.drawsNearest?.()) nearest.push(visual);
-      else visual.draw(pass, rv);
-    }
-    pass.end();
-    if (nearest.length) {
-      // Each in two passes: its depth alone, into a depth texture of its own; then its colour where
-      // it is that nearest layer, depth-tested against the scene (read-only: it writes no depth, so
-      // the translucent surfaces behind it still show through it).
-      const depth = this.ensureDepth(pxWidth, pxHeight);
-      const own = this.ensureNearest(pxWidth, pxHeight);
-      for (const visual of nearest) {
+      if (is3d && depth && visual.drawsNearest?.()) {
+        // A translucent surface drawn by its nearest layer, in its place in the order (between
+        // the other translucent surfaces, wireframes too): its depth alone, into a depth texture
+        // of its own; then its colour where it is that nearest layer, depth-tested against the
+        // scene (read-only: it writes no depth, so translucent surfaces behind it show through).
+        pass?.end();
+        pass = null;
+        const own = this.ensureNearest(pxWidth, pxHeight);
         const depthPass = encoder.beginRenderPass({
           colorAttachments: [],
           depthStencilAttachment: {
@@ -188,8 +194,13 @@ export class Renderer {
         });
         visual.drawNearest!(colorPass, rv, own);
         colorPass.end();
+        continue;
       }
+      pass ??= begin();
+      visual.draw(pass, rv);
+      if (visual.writesDepth !== false) rv.depthClear = false;
     }
+    pass?.end();
     this.device.queue.submit([encoder.finish()]);
   }
 

@@ -12,6 +12,7 @@ const VERTEX_STRIDE = 24; // [x,y,z, r,g,b] × 4 bytes
  */
 export class AxesVisual implements LayerVisual {
   readonly ndisplay = 3 as 2 | 3;
+  readonly writesDepth = false;
 
   private readonly module: GPUShaderModule;
   private readonly uniformBuffer: GPUBuffer;
