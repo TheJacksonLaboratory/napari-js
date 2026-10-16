@@ -8,6 +8,13 @@ import type { Camera3D } from '../camera/camera3d';
  */
 export const DEPTH_FORMAT: GPUTextureFormat = 'depth24plus';
 
+/**
+ * Format of the depth texture a translucent surface's nearest layer is found in (see
+ * {@link LayerVisual.drawNearest}): 32-bit float, so the colour pass compares its fragments' depth
+ * with exactly what the depth pass wrote.
+ */
+export const NEAREST_DEPTH_FORMAT: GPUTextureFormat = 'depth32float';
+
 /** Per-frame view state handed to every visual. 2D visuals use `camera2d`; volume uses `camera3d`. */
 export interface RenderView {
   camera2d: Camera;
@@ -28,5 +35,15 @@ export interface LayerVisual {
   sync(): void;
   /** Encode draws for the given view. */
   draw(pass: GPURenderPassEncoder, view: RenderView): void;
+  /**
+   * Whether this frame draws the visual by its nearest layer (a translucent surface): the renderer
+   * then calls {@link drawDepth} in a depth-only pass of its own, then {@link drawNearest}, after
+   * every other layer, instead of {@link draw}.
+   */
+  drawsNearest?(): boolean;
+  /** Write the visual's depth only, into a {@link NEAREST_DEPTH_FORMAT} attachment. */
+  drawDepth?(pass: GPURenderPassEncoder, view: RenderView): void;
+  /** Draw the visual's colour where it is the nearest layer `nearest` (from drawDepth) holds. */
+  drawNearest?(pass: GPURenderPassEncoder, view: RenderView, nearest: GPUTextureView): void;
   dispose(): void;
 }

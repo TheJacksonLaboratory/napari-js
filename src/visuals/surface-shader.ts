@@ -6,6 +6,11 @@ import { MAX_CLIPPING_PLANES } from '../layers/clipping';
 // derivatives of world position (dpdx/dpdy), so no per-vertex normals or normal matrix are needed.
 // Premultiplied output for the canvas 'premultiplied' alpha mode. Depth is written by the pipeline
 // (see surface-visual.ts).
+//
+// A translucent surface is drawn by its nearest layer only, in two passes: fsDepth writes its
+// depth alone into a depth texture of its own, then fsNearest draws its colour where it is that
+// nearest layer. Drawn in one pass, every layer of it blended over the others in the mesh's
+// triangle order, so from some sides its far part covered its near part.
 export const SURFACE_SHADER = /* wgsl */ `
 struct U {
   mvp : mat4x4<f32>,
@@ -19,8 +24,12 @@ struct U {
 @group(0) @binding(1) var lutSampler : sampler;
 @group(0) @binding(2) var lut : texture_2d<f32>;
 
+// The surface's own nearest depth per pixel (fsNearest only; see above).
+@group(1) @binding(0) var nearest : texture_depth_2d;
+
 struct VSOut {
-  @builtin(position) position : vec4<f32>,
+  // Invariant: the depth pass and the colour pass compute the same depth for the same fragment.
+  @builtin(position) @invariant position : vec4<f32>,
   @location(0) worldPos : vec3<f32>,
   @location(1) value : f32,
   @location(2) color : vec4<f32>,
@@ -38,8 +47,43 @@ fn vs(@location(0) pos : vec3<f32>, @location(1) value : f32, @location(2) vcolo
   return out;
 }
 
+// Whether a clipping plane cuts this fragment away.
+fn clippedAway(worldPos : vec3<f32>) -> bool {
+  var clipped = false;
+  let planeCount = i32(u.flags.w);
+  for (var i = 0; i < planeCount; i++) {
+    if (dot(worldPos - u.planes[2 * i].xyz, u.planes[2 * i + 1].xyz) < 0.0) {
+      clipped = true;
+    }
+  }
+  return clipped;
+}
+
 @fragment
 fn fs(in : VSOut) -> @location(0) vec4<f32> {
+  return shadeSurface(in);
+}
+
+// The depth pass of a translucent surface: its depth only, where it is not clipped away.
+@fragment
+fn fsDepth(in : VSOut) {
+  if (clippedAway(in.worldPos)) {
+    discard;
+  }
+}
+
+// The colour pass of a translucent surface: only where it is its own nearest layer.
+@fragment
+fn fsNearest(in : VSOut) -> @location(0) vec4<f32> {
+  let c = shadeSurface(in);
+  let near = textureLoad(nearest, vec2<i32>(in.position.xy), 0);
+  if (in.position.z > near + 1e-6) {
+    discard;
+  }
+  return c;
+}
+
+fn shadeSurface(in : VSOut) -> vec4<f32> {
   // Flat face normal from the world-position gradient across the triangle (kept in uniform control
   // flow so the derivative builtins are always evaluated). Wireframe lines are drawn fullbright,
   // since screen-space derivatives are ill-defined for line primitives.
@@ -65,14 +109,7 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
 
   // Clipping planes (vertex coordinates): kept where dot(p - position, normal) >= 0 for every one.
   // Tested last, so the derivatives and the LUT sample above stay in uniform control flow.
-  var clipped = false;
-  let planeCount = i32(u.flags.w);
-  for (var i = 0; i < planeCount; i++) {
-    if (dot(in.worldPos - u.planes[2 * i].xyz, u.planes[2 * i + 1].xyz) < 0.0) {
-      clipped = true;
-    }
-  }
-  if (clipped) {
+  if (clippedAway(in.worldPos)) {
     discard;
   }
 

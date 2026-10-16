@@ -183,6 +183,14 @@ mu })` is Laplacian smoothing, or Taubin with `mu` (keeps the volume). Pure; wor
 
 ### Fixed
 
+- **A translucent surface shows its near side over its far side, from every side.** It was drawn in
+  one pass, both faces of every triangle, writing no depth, so its layers blended in the mesh's
+  triangle order: from some sides its far part (drawn later) covered its near part and looked the
+  less transparent of the two. A filled translucent surface is now drawn by its nearest layer: its
+  depth alone into a depth texture of its own, then its colour where it is that layer, blended over
+  what is behind it. It still writes no depth to the scene, so a translucent surface inside another
+  (a region inside its parent) shows through it.
+
 - **A volume and the surfaces inside it are drawn by depth.** The volume, a full-screen raymarch,
   wrote no depth, so every surface drawn with it (a region's reconstruction, a slice plane) showed
   over it from every side: a region behind the cerebellum still showed through it. Each pixel of
