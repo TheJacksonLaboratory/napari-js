@@ -190,8 +190,7 @@ mu })` is Laplacian smoothing, or Taubin with `mu` (keeps the volume). Pure; wor
   depth alone into a depth texture of its own, then its colour where it is that layer, blended over
   what is behind it. It still writes no depth to the scene, so a translucent surface inside another
   (a region inside its parent) shows through it. It keeps its place in the far-to-near order of
-  the translucent surfaces (wireframes included), and a fully transparent part of it (vertex alpha
-  0) is not its nearest layer: the mesh behind it shows.
+  the translucent surfaces (wireframes included), and a fully transparent part of it (vertex alpha 0) is not its nearest layer: the mesh behind it shows.
 
 - **A volume and the surfaces inside it are drawn by depth.** The volume, a full-screen raymarch,
   wrote no depth, so every surface drawn with it (a region's reconstruction, a slice plane) showed
