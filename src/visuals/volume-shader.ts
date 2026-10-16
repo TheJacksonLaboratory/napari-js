@@ -13,6 +13,11 @@
 // voxel (i, j, k) is centred on [i, j, k]: texture coordinate × dims − 0.5. Each is a half-space
 // along the ray, so it narrows the marched range [tNear, tFar] analytically rather than testing
 // every sample. A plane at most one voxel thick is sampled once, where the ray crosses it.
+//
+// Each drawn pixel writes a depth, as napari's (vispy's) volume does, so the surfaces and points
+// drawn with it are hidden where the volume is in front of them and drawn over it where they are
+// in front: MIP at its brightest sample, iso at the surface it hits, translucent at the
+// opacity-weighted depth of what it composited (the depth of the colour it shows).
 export const VOLUME_SHADER = /* wgsl */ `
 struct U {
   invMvp : mat4x4<f32>,
@@ -22,6 +27,7 @@ struct U {
   plane : vec4<f32>,    // the depicted plane: unit normal (data coords), -dot(normal, position)
   plane2 : vec4<f32>,   // half thickness (voxels), clipping plane count, 0, 0
   clip : array<vec4<f32>, 6>,  // clipping planes as plane is; a sample is kept where dot(n, p) + w >= 0
+  mvp : mat4x4<f32>,    // volume [0,1]^3 space → clip space: the depth a sample is written at
 };
 @group(0) @binding(0) var<uniform> u : U;
 @group(0) @binding(1) var volSamp : sampler;
@@ -33,6 +39,17 @@ struct VSOut {
   @builtin(position) position : vec4<f32>,
   @location(0) ndc : vec2<f32>,
 };
+
+struct FSOut {
+  @location(0) color : vec4<f32>,
+  @builtin(frag_depth) depth : f32,
+};
+
+// The depth buffer's value at a point in volume space.
+fn depthOf(pos : vec3<f32>) -> f32 {
+  let c = u.mvp * vec4<f32>(pos, 1.0);
+  return clamp(c.z / c.w, 0.0, 1.0);
+}
 
 @vertex
 fn vs(@builtin(vertex_index) vi : u32) -> VSOut {
@@ -96,7 +113,7 @@ fn shade(t : f32) -> vec3<f32> {
 }
 
 @fragment
-fn fs(in : VSOut) -> @location(0) vec4<f32> {
+fn fs(in : VSOut) -> FSOut {
   let ro = unproject(in.ndc, 0.0);          // near point, volume space
   let rf = unproject(in.ndc, 1.0);          // far point
   let rd = rf - ro;
@@ -145,6 +162,11 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
   var maxT = 0.0;
   var col = vec3<f32>(0.0);
   var acc = 0.0;
+  // Where along the ray the pixel is drawn (its depth): MIP's brightest sample, iso's hit, or
+  // translucent's opacity-weighted mean (tSum / wSum).
+  var tAt = tNear;
+  var tSum = 0.0;
+  var wSum = 0.0;
 
   for (var i = 0; i < steps; i = i + 1) {
     let t = tNear + (f32(i) + 0.5) * dt;
@@ -154,13 +176,19 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
 
     if (mode < 0.5) {
       // MIP, on the pre-gamma value: pow is monotonic, so it is the same voxel.
-      maxT = max(maxT, tw);
+      if (tw > maxT) {
+        maxT = tw;
+        tAt = t;
+      }
     } else if (mode < 1.5) {
       // Front-to-back translucent DVR
       let a = w * opacity;
       let c = shade(tw);
-      col = col + (1.0 - acc) * c * a;
-      acc = acc + (1.0 - acc) * a;
+      let weight = (1.0 - acc) * a;
+      col = col + weight * c;
+      tSum = tSum + weight * t;
+      wSum = wSum + weight;
+      acc = acc + weight;
       if (acc >= 0.99) { break; }
     } else {
       // Iso-surface: first crossing → gradient + lambert
@@ -175,6 +203,7 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
         let lambert = max(dot(n, lightDir), 0.0) * 0.8 + 0.2;
         col = shade(tw) * lambert;
         acc = opacity;
+        tAt = t;
         break;
       }
     }
@@ -189,6 +218,10 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
     acc = opacity;
   }
   if (acc <= 0.0) { discard; }
-  return vec4<f32>(col * acc, acc);
+  if (mode >= 0.5 && mode < 1.5) { tAt = tSum / max(wSum, 1e-9); }
+  var out : FSOut;
+  out.color = vec4<f32>(col * acc, acc);
+  out.depth = depthOf(ro + rd * tAt);
+  return out;
 }
 `;

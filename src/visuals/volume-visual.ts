@@ -10,17 +10,24 @@ import { MAX_CLIPPING_PLANES } from '../layers/clipping';
 
 /**
  * mat4(16) + vec4 params + vec4 params2 + vec4 dims + vec4 plane + vec4 plane2 +
- * vec4 clip[MAX_CLIPPING_PLANES] — the layout of `U` in volume-shader.ts.
+ * vec4 clip[MAX_CLIPPING_PLANES] + mat4 mvp(16) — the layout of `U` in volume-shader.ts.
  */
-export const VOLUME_UNIFORM_FLOATS = 36 + 4 * MAX_CLIPPING_PLANES;
+const MVP_OFFSET = 36 + 4 * MAX_CLIPPING_PLANES;
+export const VOLUME_UNIFORM_FLOATS = MVP_OFFSET + 16;
 const UNIFORM_BYTES = VOLUME_UNIFORM_FLOATS * 4;
 const STEPS = 192;
 
 /**
  * Pack the per-frame uniforms (layout in volume-shader.ts) into `out`. Pure, so the packing —
- * the normalized window, the mode and the flags — is testable without a device.
+ * the normalized window, the mode and the flags — is testable without a device. `mvp` (volume
+ * space → clip space, `invMvp`'s inverse) places the depth each pixel is written at.
  */
-export function packVolumeUniforms(out: Float32Array, layer: VolumeLayer, invMvp: Mat4): void {
+export function packVolumeUniforms(
+  out: Float32Array,
+  layer: VolumeLayer,
+  invMvp: Mat4,
+  mvp: Mat4 = invert(invMvp),
+): void {
   out.set(invMvp, 0);
   // The texture is r8unorm, so the shader sees samples in 0..1: normalize the window to match.
   const [lo, hi] = layer.contrastLimits;
@@ -47,8 +54,9 @@ export function packVolumeUniforms(out: Float32Array, layer: VolumeLayer, invMvp
   out[34] = 0;
   out[35] = 0;
   // clip: each clipping plane as a half-space, the rest zero.
-  out.fill(0, 36, VOLUME_UNIFORM_FLOATS);
+  out.fill(0, 36, MVP_OFFSET);
   clipping.forEach((p, i) => out.set(halfSpace(p), 36 + 4 * i));
+  out.set(mvp, MVP_OFFSET);
 }
 
 /**
@@ -67,8 +75,14 @@ export class VolumeVisual implements LayerVisual {
   private readonly volSampler: GPUSampler;
   private readonly lutSampler: GPUSampler;
   private model: Float32Array;
-  private bindGroup: GPUBindGroup;
+  /** Colour and depth in one draw: while nothing has written the frame's depth yet. */
   private pipeline: GPURenderPipeline;
+  private bindGroup: GPUBindGroup;
+  /** Colour alone, then depth alone (the nearer of it and what is there): over written depth. */
+  private colorPipeline: GPURenderPipeline;
+  private colorBindGroup: GPUBindGroup;
+  private readonly depthPipeline: GPURenderPipeline;
+  private readonly depthBindGroup: GPUBindGroup;
   private currentBlend: BlendMode;
   private lutVersion: number;
   private geometryVersion: number;
@@ -118,8 +132,12 @@ export class VolumeVisual implements LayerVisual {
     this.geometryVersion = layer.geometryVersion;
 
     this.currentBlend = layer.blending;
-    this.pipeline = this.buildPipeline(layer.blending);
-    this.bindGroup = this.buildBindGroup();
+    this.pipeline = this.buildPipeline(layer.blending, 'both');
+    this.bindGroup = this.buildBindGroup(this.pipeline);
+    this.colorPipeline = this.buildPipeline(layer.blending, 'color');
+    this.colorBindGroup = this.buildBindGroup(this.colorPipeline);
+    this.depthPipeline = this.buildPipeline(layer.blending, 'depth');
+    this.depthBindGroup = this.buildBindGroup(this.depthPipeline);
   }
 
   // Model: map volume [0,1]^3 → world box centered at origin, sized by voxel dims × per-axis
@@ -135,25 +153,40 @@ export class VolumeVisual implements LayerVisual {
     );
   }
 
-  private buildPipeline(blend: BlendMode): GPURenderPipeline {
+  /**
+   * The volume is a full-screen raymarch quad that writes the depth of what it shows (see
+   * volume-shader.ts), so surfaces and points drawn after it are hidden where it is in front of
+   * them. Its colour is never depth-tested: channels added over each other stay whole, in any
+   * order. Its depth must be the nearest of everything drawn, though (a farther channel drawn last
+   * must not undo a nearer one's occlusion), so over depth already written it draws twice:
+   * `'color'` (no depth), then `'depth'` (no colour, the nearer depth kept). On a clear depth
+   * buffer one `'both'` draw does the same.
+   */
+  private buildPipeline(blend: BlendMode, writes: 'both' | 'color' | 'depth'): GPURenderPipeline {
     return this.device.createRenderPipeline({
       layout: 'auto',
       vertex: { module: this.module, entryPoint: 'vs' },
       fragment: {
         module: this.module,
         entryPoint: 'fs',
-        targets: [{ format: this.format, blend: blendStateFor(blend) }],
+        targets: [
+          writes === 'depth'
+            ? { format: this.format, writeMask: 0 }
+            : { format: this.format, blend: blendStateFor(blend) },
+        ],
       },
       primitive: { topology: 'triangle-list' },
-      // The volume is a full-screen raymarch quad: never depth-test or write, so it composites
-      // exactly as before now that 3D passes carry a depth attachment.
-      depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: false, depthCompare: 'always' },
+      depthStencil: {
+        format: DEPTH_FORMAT,
+        depthWriteEnabled: writes !== 'color',
+        depthCompare: writes === 'depth' ? 'less' : 'always',
+      },
     });
   }
 
-  private buildBindGroup(): GPUBindGroup {
+  private buildBindGroup(pipeline: GPURenderPipeline): GPUBindGroup {
     return this.device.createBindGroup({
-      layout: this.pipeline.getBindGroupLayout(0),
+      layout: pipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: { buffer: this.uniformBuffer } },
         { binding: 1, resource: this.volSampler },
@@ -176,8 +209,10 @@ export class VolumeVisual implements LayerVisual {
   sync(): void {
     if (this.layer.blending !== this.currentBlend) {
       this.currentBlend = this.layer.blending;
-      this.pipeline = this.buildPipeline(this.currentBlend);
-      this.bindGroup = this.buildBindGroup();
+      this.pipeline = this.buildPipeline(this.currentBlend, 'both');
+      this.bindGroup = this.buildBindGroup(this.pipeline);
+      this.colorPipeline = this.buildPipeline(this.currentBlend, 'color');
+      this.colorBindGroup = this.buildBindGroup(this.colorPipeline);
     }
     if (this.layer.colormapVersion !== this.lutVersion) {
       this.lutVersion = this.layer.colormapVersion;
@@ -193,11 +228,20 @@ export class VolumeVisual implements LayerVisual {
     const mvp = multiply(view.camera3d.viewProjection(view.vw, view.vh), this.model);
     const invMvp = invert(mvp);
 
-    packVolumeUniforms(this.scratch, this.layer, invMvp);
+    packVolumeUniforms(this.scratch, this.layer, invMvp, mvp);
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.scratch);
 
-    pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, this.bindGroup);
+    if (view.depthClear) {
+      pass.setPipeline(this.pipeline);
+      pass.setBindGroup(0, this.bindGroup);
+      pass.draw(6);
+      return;
+    }
+    pass.setPipeline(this.colorPipeline);
+    pass.setBindGroup(0, this.colorBindGroup);
+    pass.draw(6);
+    pass.setPipeline(this.depthPipeline);
+    pass.setBindGroup(0, this.depthBindGroup);
     pass.draw(6);
   }
 

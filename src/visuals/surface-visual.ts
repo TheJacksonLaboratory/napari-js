@@ -1,7 +1,12 @@
 import type { SurfaceLayer } from '../layers/surface-layer';
 import { SURFACE_VERTEX_FLOATS } from '../layers/surface-layer';
 import type { BlendMode } from '../layers/layer';
-import { DEPTH_FORMAT, type LayerVisual, type RenderView } from './layer-visual';
+import {
+  DEPTH_FORMAT,
+  NEAREST_DEPTH_FORMAT,
+  type LayerVisual,
+  type RenderView,
+} from './layer-visual';
 import { buildLut, LUT_SIZE } from '../color/lut';
 import { SURFACE_SHADER } from './surface-shader';
 import { blendStateFor } from './blend';
@@ -137,6 +142,86 @@ export class SurfaceVisual implements LayerVisual {
     this.bindGroup = this.buildBindGroup();
   }
 
+  /** The translucent passes' pipelines and bind group (see drawDepth, drawNearest), made on use. */
+  private nearestPasses?: {
+    blend: BlendMode;
+    vertexColors: boolean;
+    depth: GPURenderPipeline;
+    depthGroup: GPUBindGroup;
+    color: GPURenderPipeline;
+    colorGroup: GPUBindGroup;
+    nearestView?: GPUTextureView;
+    nearestGroup?: GPUBindGroup;
+  };
+
+  private vertexState(vertexColors: boolean): GPUVertexState {
+    return {
+      module: this.module,
+      entryPoint: 'vs',
+      buffers: [
+        {
+          arrayStride: VERTEX_STRIDE,
+          attributes: [
+            { shaderLocation: 0, offset: 0, format: 'float32x3' }, // position
+            { shaderLocation: 1, offset: 12, format: 'float32' }, // value
+          ],
+        },
+        {
+          arrayStride: vertexColors ? COLOR_STRIDE : 0,
+          attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x4' }], // colour
+        },
+      ],
+    };
+  }
+
+  /** The depth-only and nearest-layer pipelines, for the current blend and colour mode. */
+  private nearestPipelines(): NonNullable<SurfaceVisual['nearestPasses']> {
+    const blend = this.currentBlend;
+    const vertexColors = this.currentVertexColors;
+    const have = this.nearestPasses;
+    if (have && have.blend === blend && have.vertexColors === vertexColors) return have;
+    const primitive: GPUPrimitiveState = { topology: 'triangle-list', cullMode: 'none' };
+    const depth = this.device.createRenderPipeline({
+      layout: 'auto',
+      vertex: this.vertexState(vertexColors),
+      fragment: { module: this.module, entryPoint: 'fsDepth', targets: [] },
+      primitive,
+      depthStencil: { format: NEAREST_DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'less' },
+    });
+    const color = this.device.createRenderPipeline({
+      layout: 'auto',
+      vertex: this.vertexState(vertexColors),
+      fragment: {
+        module: this.module,
+        entryPoint: 'fsNearest',
+        targets: [{ format: this.format, blend: blendStateFor(blend) }],
+      },
+      primitive,
+      // Hidden by what is in front of it (opaque geometry, a volume), writing no depth itself, so
+      // other translucent surfaces behind it (a region inside another) still show through it.
+      depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: false, depthCompare: 'less' },
+    });
+    this.nearestPasses = {
+      blend,
+      vertexColors,
+      depth,
+      depthGroup: this.device.createBindGroup({
+        layout: depth.getBindGroupLayout(0),
+        entries: [{ binding: 0, resource: { buffer: this.uniformBuffer } }],
+      }),
+      color,
+      colorGroup: this.device.createBindGroup({
+        layout: color.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: this.uniformBuffer } },
+          { binding: 1, resource: this.lutSampler },
+          { binding: 2, resource: this.lutTexture.createView() },
+        ],
+      }),
+    };
+    return this.nearestPasses;
+  }
+
   /**
    * Write `data` into `buffer`, made (or replaced) when missing or too small; returns the buffer.
    * At least 16 bytes, so an empty mesh still binds a valid buffer.
@@ -188,23 +273,7 @@ export class SurfaceVisual implements LayerVisual {
   ): GPURenderPipeline {
     return this.device.createRenderPipeline({
       layout: 'auto',
-      vertex: {
-        module: this.module,
-        entryPoint: 'vs',
-        buffers: [
-          {
-            arrayStride: VERTEX_STRIDE,
-            attributes: [
-              { shaderLocation: 0, offset: 0, format: 'float32x3' }, // position
-              { shaderLocation: 1, offset: 12, format: 'float32' }, // value
-            ],
-          },
-          {
-            arrayStride: vertexColors ? COLOR_STRIDE : 0,
-            attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x4' }], // colour
-          },
-        ],
-      },
+      vertex: this.vertexState(vertexColors),
       fragment: {
         module: this.module,
         entryPoint: 'fs',
@@ -213,7 +282,8 @@ export class SurfaceVisual implements LayerVisual {
       // Wireframe draws the triangle edges as a line-list; filled draws the triangles.
       primitive: { topology: wireframe ? 'line-list' : 'triangle-list', cullMode: 'none' },
       // A translucent surface is depth-tested (opaque geometry in front hides it) but does not
-      // write depth, so what is drawn behind it after it still shows through.
+      // write depth, so what is drawn behind it after it still shows through. (Filled, it is drawn
+      // by drawDepth and drawNearest instead: this is its wireframe.)
       depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: !translucent, depthCompare: 'less' },
     });
   }
@@ -277,15 +347,51 @@ export class SurfaceVisual implements LayerVisual {
     const wireframe = this.layer.wireframe;
     const count = wireframe ? this.edgeCount : this.indexCount;
     if (count === 0) return;
-    packSurfaceUniforms(this.scratch, this.layer, view.camera3d, view.vw, view.vh);
-    this.device.queue.writeBuffer(this.uniformBuffer, 0, this.scratch);
-
+    this.writeUniforms(view);
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this.bindGroup);
+    this.drawMesh(pass, wireframe);
+  }
+
+  /** A filled translucent surface is drawn by its nearest layer (see surface-shader.ts). */
+  drawsNearest(): boolean {
+    return this.layer.translucent && !this.layer.wireframe && this.indexCount > 0;
+  }
+
+  drawDepth(pass: GPURenderPassEncoder, view: RenderView): void {
+    const p = this.nearestPipelines();
+    this.writeUniforms(view);
+    pass.setPipeline(p.depth);
+    pass.setBindGroup(0, p.depthGroup);
+    this.drawMesh(pass, false);
+  }
+
+  drawNearest(pass: GPURenderPassEncoder, view: RenderView, nearest: GPUTextureView): void {
+    const p = this.nearestPipelines();
+    if (p.nearestView !== nearest || !p.nearestGroup) {
+      p.nearestView = nearest;
+      p.nearestGroup = this.device.createBindGroup({
+        layout: p.color.getBindGroupLayout(1),
+        entries: [{ binding: 0, resource: nearest }],
+      });
+    }
+    this.writeUniforms(view);
+    pass.setPipeline(p.color);
+    pass.setBindGroup(0, p.colorGroup);
+    pass.setBindGroup(1, p.nearestGroup);
+    this.drawMesh(pass, false);
+  }
+
+  private writeUniforms(view: RenderView): void {
+    packSurfaceUniforms(this.scratch, this.layer, view.camera3d, view.vw, view.vh);
+    this.device.queue.writeBuffer(this.uniformBuffer, 0, this.scratch);
+  }
+
+  private drawMesh(pass: GPURenderPassEncoder, wireframe: boolean): void {
     pass.setVertexBuffer(0, this.vertexBuffer!);
     pass.setVertexBuffer(1, this.colorBuffer!);
     pass.setIndexBuffer((wireframe ? this.edgeBuffer : this.indexBuffer)!, 'uint32');
-    pass.drawIndexed(count);
+    pass.drawIndexed(wireframe ? this.edgeCount : this.indexCount);
   }
 
   dispose(): void {
