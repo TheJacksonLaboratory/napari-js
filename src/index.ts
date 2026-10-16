@@ -24,6 +24,7 @@ export { DEFAULT_WHEEL_ZOOM_SPEED, WHEEL_DELTA_CLAMP } from './camera/wheel';
 export { DEFAULT_ZOOM_SMOOTHING_MS } from './camera/zoom-smoothing';
 export { Layer } from './layers/layer';
 export type { BlendMode, Fit3D } from './layers/layer';
+export { blendingUsesDepth } from './layers/layer';
 export {
   MAX_CLIPPING_PLANES,
   insideClippingPlanes,

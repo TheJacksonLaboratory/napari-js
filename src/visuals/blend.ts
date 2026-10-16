@@ -9,6 +9,7 @@ export function blendStateFor(mode: BlendMode): GPUBlendState | undefined {
     case 'opaque':
       return undefined;
     case 'translucent':
+    case 'translucent_no_depth':
       return {
         color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
         alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
