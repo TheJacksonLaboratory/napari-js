@@ -3,7 +3,133 @@
 All notable changes to napari-js are documented here. The format roughly follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.17.0]
+
+Region surfaces drawn with a volume, and with each other, by depth: a surface behind what the
+volume shows is hidden by it, and a translucent surface shows its near side over its far side
+from every angle.
+
+### Fixed
+
+- **A translucent surface shows its near side over its far side, from every side.** It was drawn in
+  one pass, both faces of every triangle, writing no depth, so its layers blended in the mesh's
+  triangle order: from some sides its far part (drawn later) covered its near part and looked the
+  less transparent of the two. A filled translucent surface is now drawn by its nearest layer: its
+  depth alone into a depth texture of its own, then its colour where it is that layer, blended over
+  what is behind it. It still writes no depth to the scene, so a translucent surface inside another
+  (a region inside its parent) shows through it. It keeps its place in the far-to-near order of
+  the translucent surfaces (wireframes included), and a fully transparent part of it (vertex
+  alpha 0) is not its nearest layer: the mesh behind it shows.
+
+- **A volume and the surfaces inside it are drawn by depth.** The volume, a full-screen raymarch,
+  wrote no depth, so every surface drawn with it (a region's reconstruction, a slice plane) showed
+  over it from every side: a region behind the cerebellum still showed through it. Each pixel of
+  the volume now writes the depth of what it shows, as napari's (vispy's) does: MIP at its
+  brightest sample, iso at the surface it hits, translucent at the opacity-weighted depth of what it
+  composited. A surface or point behind that is hidden; one in front is drawn over the volume.
+  Volumes' colours are still not depth-tested against each other, so added channels stay whole; the
+  depth kept is the nearest of them, whatever order the channels are drawn in.
+
+### Changed
+
+- **3D draw cost.** A filled translucent surface takes two render passes of its own (its depth,
+  then its colour), and a volume drawn over depth already written (a second channel, opaque
+  geometry) raymarches twice (its colour, then its depth). One volume on its own is one draw, as
+  before.
+- `VOLUME_UNIFORM_FLOATS` is 76 (the volume uniforms gain the clip matrix `mvp`).
+
+## [0.16.0]
+
+The 3D APIs the sci-image-visualizer volume split view needed, so it carries none of its own:
+surface picking, meshes from voxel masks (`surfaceNets`), a volume's plane depiction and clipping
+planes on volumes and surfaces, an orthogonal `SlicePlanesWidget`, solid and per-vertex surface
+colours and in-place `setData` — and real-GPU tests (`npm run test:gpu`) run in CI on SwiftShader.
+
+### Added
+
+- **Plane depiction on `VolumeLayer`** (napari's `depiction` / `plane`). `depiction: 'volume' |
+'plane'` and `plane: { position, normal, thickness? }`, in data (voxel) coordinates (voxel
+  `(i, j, k)` centred on `[i, j, k]`), as an option and a live setter. A plane one voxel thick or
+  thinner is sampled once where each ray crosses it, so an axis-aligned plane at an integer position
+  shows exactly that slice; a thicker one marches its slab under the current rendering mode. Only
+  uniforms change: the volume texture is not uploaded again. `MultiChannelVolumeView` carries both
+  through its render options and `setDepiction` / `setPlane`. `volumePlaneSlice` is the CPU
+  reference for what an axis-aligned plane shows, with `planeSlabContains`, `halfSpace` and
+  `clipRayRange`.
+
+- **Clipping planes** (napari's `experimental_clipping_planes`). `ClippingPlane` (`position`,
+  `normal`, `enabled`) in data coordinates keeps `dot(p − position, normal) ≥ 0`; up to
+  `MAX_CLIPPING_PLANES` per layer, `insideClippingPlanes` the CPU reference.
+  - `VolumeLayer.clippingPlanes`: each plane narrows the marched ray range analytically (what is
+    left keeps its full step count), under every rendering mode and a `'plane'` depiction;
+    `MultiChannelVolumeView.setClippingPlanes` sets them on every channel; `clipRayRangeByPlanes`
+    is the CPU reference.
+  - `SurfaceLayer.clippingPlanes`, in the mesh's vertex coordinates, cut fragments in the shader.
+  - Moving a plane re-uploads nothing.
+
+- **Surface picking.** `viewer.canvasRay(x, y)` is the world ray under a canvas point;
+  `viewer.pickSurface(x, y, { pickable })` the nearest visible surface hit
+  `{ layer, face, point, distance }`, skipping clipped-away parts and anything beyond the far plane
+  (a `screenRay` carries its `length`); surfaces only: a volume in front does not hide one.
+  `SurfaceLayer.pick(ray)` the same for one layer. The helpers are exported: `screenRay`,
+  `rayHitBox`, `rayHitTriangles` (Möller–Trumbore) and `invertMat4`. On `ViewerBase`, so
+  `HeadlessViewer` picks too.
+
+- **Solid and per-vertex surface colours.** `SurfaceLayer` takes `color` (a CSS colour or RGBA) and
+  `vertexColors` (packed RGBA, length 4N), which win over `values` + `colormap` in that order;
+  `colorMode` says which applies and `colorAt(i)` is the CPU reference. `color` is a uniform, so
+  recolouring re-uploads nothing; `vertexColors` re-uploads only the colours. `values` is optional.
+
+- **`SurfaceLayer.setData(vertices, faces, values?)`** replaces the mesh in place: the layer keeps
+  its id, style and place in the list, `dataVersion` moves and the visual re-uploads its buffers on
+  the next frame (a buffer is replaced only when outgrown). No remove + re-add to change a mesh.
+
+- **`surfaceNets`, `labelsToMeshes` and `smoothMesh` in `napari-js/geometry`** (napari's
+  `marching_cubes` → `add_surface`). `surfaceNets(mask, [nx, ny, nz], { voxelSize, origin, level })`
+  meshes a voxel mask's boundary by surface nets: closed even at the volume's edge, wound outward,
+  voxel `i` centred on `i` (as `VolumeLayer`'s planes), ready for `addSurface`. `labelsToMeshes`
+  gives one mesh per label, each over its own bounding box. `smoothMesh(mesh, { iterations, lambda,
+mu })` is Laplacian smoothing, or Taubin with `mu` (keeps the volume). Pure; workers too. A 256³
+  sphere meshes in about 0.17 s.
+
+- **`SlicePlanesWidget` in `napari-js/overlays`** (napari's 3D plane widget): three orthogonal slice
+  planes through a volume, translucent quads in the axes' colours (`DEFAULT_AXES_COLORS`, now
+  exported), each with a DOM grip over the canvas that drags it along its axis (the cursor's ray
+  from `viewer.canvasRay`, nearest the axis line). Positions are data (voxel) coordinates, as
+  `VolumeLayer.plane` and clipping planes use them, clamped to the voxel centres, with optional
+  `snap`. A move replaces the quad in place (`SurfaceLayer.setData`); grips are projected with the
+  viewer's own viewport, so they stay on their planes. `changed` fires on drags (`dragging: true`),
+  release and `setPosition`; arrow keys step a focused grip; `linkPlane` keeps the volume's `plane`
+  on one of them. Pure helpers: `volumeDataToWorld`, `slicePlaneCorners`, `slicePlaneGripPoint`,
+  `rayAxisParam`. Playground demo 9.
+
+- **Real-GPU tests (`npm run test:gpu`).** The real `Viewer` in headless Chromium (Vitest browser
+  mode, Playwright), pixels read back with `readDisplayedPixels` and checked against the CPU
+  references (`mapScalar`, `buildLabelLut`, `volumePlaneSlice`, …) and geometry rather than golden
+  images; every WGSL shader is compiled and checked for errors. They skip without a WebGPU adapter
+  unless `NAPARI_GPU_REQUIRED=1`. CI runs them on Chromium's SwiftShader adapter in a `gpu` job.
+
+### Changed
+
+- **Translucent surfaces write no depth and draw last.** A `SurfaceLayer` that lets what is behind it
+  show through (`translucent`: not opaque blending, and an opacity, colour alpha or vertex alpha
+  below 1) is still hidden by opaque geometry in front of it but no longer hides what is drawn
+  behind it; the renderer draws such surfaces after every other 3D layer, farthest first
+  (`drawOrder3D`). Before, a surface added after a translucent one was hidden behind it.
+
+### Fixed
+
+- **Iso-surface lighting**: the volume shader lit the iso-surface by the density gradient, which
+  points into the surface, so the faces toward the light got only the ambient term. It uses the
+  outward normal now. Found by the GPU tests.
+
+## [0.15.0]
+
+The APIs the sci-image-visualizer code review asked napari-js to own: layer reordering without GPU
+re-uploads, packed per-point colours and per-point symbols, per-shape colours, RGBA colormaps and
+`transparentBelow`, `invert` on the 3D layers, napari-style picking, whole-level tile reads, and four
+subpath entries — `napari-js/testing` (a GPU-free `HeadlessViewer`), `napari-js/overlays`,
+`napari-js/colormaps` and `napari-js/geometry`. Each replaces a workaround a consumer had to carry.
 
 ### Added
 
@@ -99,75 +225,7 @@ All notable changes to napari-js are documented here. The format roughly follows
 - **`LruCache<V, K = string>`**: the key type is generic (numbers, objects by identity…), so
   numeric-keyed caches can use it too. `V` stays first, so `LruCache<V>` is unchanged.
 
-- **Plane depiction on `VolumeLayer`** (napari's `depiction` / `plane`). `depiction: 'volume' |
-'plane'` and `plane: { position, normal, thickness? }`, in data (voxel) coordinates (voxel
-  `(i, j, k)` centred on `[i, j, k]`), as an option and a live setter. A plane one voxel thick or
-  thinner is sampled once where each ray crosses it, so an axis-aligned plane at an integer position
-  shows exactly that slice; a thicker one marches its slab under the current rendering mode. Only
-  uniforms change: the volume texture is not uploaded again. `MultiChannelVolumeView` carries both
-  through its render options and `setDepiction` / `setPlane`. `volumePlaneSlice` is the CPU
-  reference for what an axis-aligned plane shows, with `planeSlabContains`, `halfSpace` and
-  `clipRayRange`.
-
-- **Clipping planes** (napari's `experimental_clipping_planes`). `ClippingPlane` (`position`,
-  `normal`, `enabled`) in data coordinates keeps `dot(p − position, normal) ≥ 0`; up to
-  `MAX_CLIPPING_PLANES` per layer, `insideClippingPlanes` the CPU reference.
-  - `VolumeLayer.clippingPlanes`: each plane narrows the marched ray range analytically (what is
-    left keeps its full step count), under every rendering mode and a `'plane'` depiction;
-    `MultiChannelVolumeView.setClippingPlanes` sets them on every channel; `clipRayRangeByPlanes`
-    is the CPU reference.
-  - `SurfaceLayer.clippingPlanes`, in the mesh's vertex coordinates, cut fragments in the shader.
-  - Moving a plane re-uploads nothing.
-
-- **Surface picking.** `viewer.canvasRay(x, y)` is the world ray under a canvas point;
-  `viewer.pickSurface(x, y, { pickable })` the nearest visible surface hit
-  `{ layer, face, point, distance }`, skipping clipped-away parts and anything beyond the far plane
-  (a `screenRay` carries its `length`); surfaces only: a volume in front does not hide one.
-  `SurfaceLayer.pick(ray)` the same for one layer. The helpers are exported: `screenRay`,
-  `rayHitBox`, `rayHitTriangles` (Möller–Trumbore) and `invertMat4`. On `ViewerBase`, so
-  `HeadlessViewer` picks too.
-
-- **Solid and per-vertex surface colours.** `SurfaceLayer` takes `color` (a CSS colour or RGBA) and
-  `vertexColors` (packed RGBA, length 4N), which win over `values` + `colormap` in that order;
-  `colorMode` says which applies and `colorAt(i)` is the CPU reference. `color` is a uniform, so
-  recolouring re-uploads nothing; `vertexColors` re-uploads only the colours. `values` is optional.
-
-- **`SurfaceLayer.setData(vertices, faces, values?)`** replaces the mesh in place: the layer keeps
-  its id, style and place in the list, `dataVersion` moves and the visual re-uploads its buffers on
-  the next frame (a buffer is replaced only when outgrown). No remove + re-add to change a mesh.
-
-- **`surfaceNets`, `labelsToMeshes` and `smoothMesh` in `napari-js/geometry`** (napari's
-  `marching_cubes` → `add_surface`). `surfaceNets(mask, [nx, ny, nz], { voxelSize, origin, level })`
-  meshes a voxel mask's boundary by surface nets: closed even at the volume's edge, wound outward,
-  voxel `i` centred on `i` (as `VolumeLayer`'s planes), ready for `addSurface`. `labelsToMeshes`
-  gives one mesh per label, each over its own bounding box. `smoothMesh(mesh, { iterations, lambda,
-mu })` is Laplacian smoothing, or Taubin with `mu` (keeps the volume). Pure; workers too. A 256³
-  sphere meshes in about 0.17 s.
-
-- **`SlicePlanesWidget` in `napari-js/overlays`** (napari's 3D plane widget): three orthogonal slice
-  planes through a volume, translucent quads in the axes' colours (`DEFAULT_AXES_COLORS`, now
-  exported), each with a DOM grip over the canvas that drags it along its axis (the cursor's ray
-  from `viewer.canvasRay`, nearest the axis line). Positions are data (voxel) coordinates, as
-  `VolumeLayer.plane` and clipping planes use them, clamped to the voxel centres, with optional
-  `snap`. A move replaces the quad in place (`SurfaceLayer.setData`); grips are projected with the
-  viewer's own viewport, so they stay on their planes. `changed` fires on drags (`dragging: true`),
-  release and `setPosition`; arrow keys step a focused grip; `linkPlane` keeps the volume's `plane`
-  on one of them. Pure helpers: `volumeDataToWorld`, `slicePlaneCorners`, `slicePlaneGripPoint`,
-  `rayAxisParam`. Playground demo 9.
-
-- **Real-GPU tests (`npm run test:gpu`).** The real `Viewer` in headless Chromium (Vitest browser
-  mode, Playwright), pixels read back with `readDisplayedPixels` and checked against the CPU
-  references (`mapScalar`, `buildLabelLut`, `volumePlaneSlice`, …) and geometry rather than golden
-  images; every WGSL shader is compiled and checked for errors. They skip without a WebGPU adapter
-  unless `NAPARI_GPU_REQUIRED=1`. CI runs them on Chromium's SwiftShader adapter in a `gpu` job.
-
 ### Changed
-
-- **Translucent surfaces write no depth and draw last.** A `SurfaceLayer` that lets what is behind it
-  show through (`translucent`: not opaque blending, and an opacity, colour alpha or vertex alpha
-  below 1) is still hidden by opaque geometry in front of it but no longer hides what is drawn
-  behind it; the renderer draws such surfaces after every other 3D layer, farthest first
-  (`drawOrder3D`). Before, a surface added after a translucent one was hidden behind it.
 
 - **`addVolume` frames like the other 3D adders**: on `layer.bounds()` through `framingFor` (field
   of view and canvas aspect), not `Camera3D.frame`'s `max(w, h, d) × 1.8`. Same target (the
@@ -181,29 +239,117 @@ mu })` is Laplacian smoothing, or Taubin with `mu` (keeps the volume). Pure; wor
   without `#` still works; a partly invalid hex now gives black as a whole rather than per channel,
   and the name is always lower-case `tint-rrggbb`.
 
+## [0.14.0]
+
+Renderer-owned 3D projection, picking, per-point styling and camera framing. Each of these
+existed as a workaround in a consumer because the API did not offer it; an ownership audit
+against sci-image-visualizer found five such, and this release takes them back.
+
+### Added
+
+- **3D world-to-screen projection.** `projectPoint` / `projectPoints`, and
+  `Viewer.projectPoints()` which supplies the live view-projection and the canvas size in CSS
+  pixels. A host that wants to put anything over a 3D scene — a DOM label, a tooltip, a lasso,
+  a hit test — previously had to multiply `Camera3D.viewProjection()` by hand, index it
+  column-major, do the perspective divide and remember that NDC y points up while the screen's
+  points down. Every host writes the same fifteen lines, and each copy is free to disagree with
+  the renderer about what is on screen; one consumer had already written it twice, in two files,
+  with two different behind-the-eye conventions.
+
+  A point the rasteriser would not draw comes back `visible: false` with `NaN` coordinates. Both
+  the near and far planes count, not just the eye: `Camera3D` derives `near` and `far` FROM the
+  camera distance, so the planes sweep through a stationary cloud as the camera moves, and a
+  `w > 0` test alone reports points the renderer has clipped. `NaN` rather than a sentinel like
+  `(0, 0)` — the canvas corner is a real position, so a caller who skips the check would place an
+  overlay there instead of hiding it.
+
+  Batch projection reuses caller-supplied buffers, since a large cloud is re-projected on every
+  camera change.
+
+- **Depth-aware 3D picking.** `nearestProjectedIndex` takes the depths `projectPoints` produced
+  and returns the FRONT-most candidate, tie-broken by cursor distance. `nearestPointIndex` had no
+  3D counterpart, so hosts picked on projected coordinates by nearest centre — and in a dense
+  cloud the cursor covers many points, so that returns whichever is best aligned, including ones
+  drawn behind something opaque. These billboards are depth-tested, so a picker that ignores depth
+  disagrees with the picture.
+
+  `ProjectedPickOptions` adds `radiusAt` and `pickable`, so picking can describe the same picture
+  the layer draws: a marker scaled up per point is found, and one muted to transparency — which
+  the shader discards — is not. Callbacks rather than arrays, matching `nearestPointIndex`'s
+  existing `sizeAt`.
+
+- **`ScreenIndex`**, a screen-space bucket grid over a projection, with `pickLinear`,
+  `SCREEN_INDEX_MIN_POINTS` and `ScreenIndexOptions`. At 3.7M points a linear pick is ~12.6 ms per
+  pointer move against ~0.066 ms indexed — about 190x — for a ~43.5 ms build.
+
+  Build it LAZILY, on the first pick after the projection changed, not when the camera moves:
+  an orbit drag changes the camera every frame, so building eagerly would spend the build cost per
+  frame serving picks nobody is making, which is strictly worse than the scan it replaces.
+
+  The grid overhangs the canvas by `maxReach` on every side, because a marker has size — its
+  centre can sit off the canvas while part of it is drawn and pickable.
+
+- **Per-point `alphas` and `sizes` on `Points3DLayer`**, multiplying the layer-wide `opacity` and
+  `size`. With one opacity for the whole cloud, a host highlighting a subset had to draw it again
+  in a second layer, keep that in step through every colormap, window and size change, and accept
+  that the two depth-sorted against each other as separate draws. Both default to 1, so a layer
+  that sets neither renders exactly as before.
+
+- **`dataVersion` and `styleVersion` on `Points3DLayer`**, so a change is a mutation rather than a
+  new layer — and, since adding a 3D layer framed the camera, so a recolour is no longer a camera
+  jump the host has to undo.
+
+- **An explicit camera framing policy.** `Fit3D` (`'always' | 'once' | 'never'`) as
+  `ViewerOptions.fit3d` or per add, plus `Viewer.fitToLayers()`, `Viewer.resetFit3D()`, and the
+  pure `Fit3DState`, `unionBounds`, `resolveFit`, `framingFor` (`FramingView`) and `Bounded`.
+  Every 3D add used to reframe unconditionally, so a scene built from more than one layer jumped,
+  and the only defence was to save the camera's five fields around each add and put them back.
+
+  `fitToLayers()` frames on the UNION of every bounded layer: a point cloud inside a reference
+  volume is one scene, and framing on whichever layer was added last shows a part of it.
+
+- **`VolumeLayer.bounds()`**, so a volume takes part in that union.
+
+### Changed
+
+- **`Points3DLayer.values` is a validating accessor**, not a bare field. Assigning to it checks the
+  length, bumps `dataVersion`, emits, and retunes a contrast window that was DERIVED from the data
+  — replacing `[10, 30]` with `[100, 300]` used to keep the old window, so every point clamped to
+  the top of the LUT. A window the caller pinned is left alone, matching `ShapesLayer`.
+
+- **The 3D instance data is two vertex buffers**, not one interleaved six floats:
+  `POINTS3D_INSTANCE_FLOATS` is replaced by `POINTS3D_DATA_FLOATS` (`[x, y, z, value]`) and
+  `POINTS3D_STYLE_FLOATS` (`[alpha, sizeScale]`), with `buildInstanceData()` and `buildStyleData()`
+  on two version counters. They change on different clocks — a selection click touches only the
+  style — and interleaving meant re-uploading the geometry with it: 88.8 MB and 32.9 ms at 3.7M
+  points to change 29.6 MB, now 29.6 MB and 21.5 ms.
+
+- **Framing distance derives from both half-angles of the frustum**, not a fixed `radius * 2.5`.
+  A constant factor assumes one field of view and one viewport shape, and the horizontal
+  half-angle shrinks with the aspect ratio: the corners of a 1000x100x100 scene projected to
+  |NDC| 2.0 at 400x800 and 5.1 at 200x1000. It was already slightly tight in landscape — 2.5
+  against the 2.61 the vertical angle alone needs at the 45 degree default — so this widens the
+  common case as well as fixing portrait.
+
+- `fit3d` defaults to `'always'`, so existing callers see no behavioural change from the policy
+  itself.
+
 ### Fixed
 
-- **A translucent surface shows its near side over its far side, from every side.** It was drawn in
-  one pass, both faces of every triangle, writing no depth, so its layers blended in the mesh's
-  triangle order: from some sides its far part (drawn later) covered its near part and looked the
-  less transparent of the two. A filled translucent surface is now drawn by its nearest layer: its
-  depth alone into a depth texture of its own, then its colour where it is that layer, blended over
-  what is behind it. It still writes no depth to the scene, so a translucent surface inside another
-  (a region inside its parent) shows through it. It keeps its place in the far-to-near order of
-  the translucent surfaces (wireframes included), and a fully transparent part of it (vertex alpha 0) is not its nearest layer: the mesh behind it shows.
+- `unionBounds` no longer accepts a layer whose `bounds()` is 2D or nullable. `ShapesLayer` has
+  one too, and a guard that only checked for the METHOD took it: an empty one threw, and a
+  non-empty one contributed an `undefined` z. Order decided which — trailing a 3D layer the
+  `undefined` lost every comparison and the bug hid; leading, it seeded the union and the camera
+  target came out NaN.
 
-- **A volume and the surfaces inside it are drawn by depth.** The volume, a full-screen raymarch,
-  wrote no depth, so every surface drawn with it (a region's reconstruction, a slice plane) showed
-  over it from every side: a region behind the cerebellum still showed through it. Each pixel of
-  the volume now writes the depth of what it shows, as napari's (vispy's) does: MIP at its
-  brightest sample, iso at the surface it hits, translucent at the opacity-weighted depth of what it
-  composited. A surface or point behind that is hidden; one in front is drawn over the volume.
-  Volumes' colours are still not depth-tested against each other, so added channels stay whole; the
-  depth kept is the nearest of them, whatever order the channels are drawn in.
+- `ScreenIndex` and the linear picker agree at the canvas edges and at the exact endpoints of
+  `maxReach`, on both sides. Two defects, both found in review: the first grid dropped every centre
+  outside the viewport, and the second kept the two ends of its margin asymmetric — `ceil` sizing
+  put the exact upper endpoint one cell past the grid whenever the span divided evenly, so
+  `width + maxReach` was excluded while `-maxReach` was kept.
 
-- **Iso-surface lighting**: the volume shader lit the iso-surface by the density gradient, which
-  points into the surface, so the faces toward the light got only the ambient term. It uses the
-  outward normal now. Found by the GPU tests.
+- `ScreenIndexOptions` is exported from the package root; it was part of the public constructor
+  contract with no supported import path.
 
 ## [0.13.0]
 
