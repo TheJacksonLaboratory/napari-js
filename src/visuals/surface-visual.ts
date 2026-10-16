@@ -81,6 +81,14 @@ export function packSurfaceUniforms(
 export class SurfaceVisual implements LayerVisual {
   readonly ndisplay = 3 as 2 | 3;
 
+  /**
+   * Whether its {@link draw} writes the scene's depth: an opaque surface of a blending with depth.
+   * A translucent one writes none (its nearest layer goes to a depth texture of its own).
+   */
+  get writesDepth(): boolean {
+    return blendingUsesDepth(this.layer.blending) && !this.layer.translucent;
+  }
+
   private readonly module: GPUShaderModule;
   private readonly uniformBuffer: GPUBuffer;
   private readonly scratch = new Float32Array(SURFACE_UNIFORM_FLOATS);

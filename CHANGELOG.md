@@ -14,7 +14,8 @@ All notable changes to napari-js are documented here. The format roughly follows
   surface inside it: layer boundaries traced inside the bright bands of an OCT volume, which a
   `'translucent'` volume's depth (its brightest sample) speckles or hides, show through it whole.
   An `'additive'` multichannel volume no longer writes depth (nor raymarches its depth a second
-  time). A surface of one of them is drawn over what is in front of it.
+  time). A surface or a 3D point of one of them is drawn over what is in front of it, and writes no
+  depth over what is drawn after it.
 
 - **`LayerList.move(layer, index)` and `LayerList.insert(index, layer)`** (napari's
   `LayerList.move`/`insert`). Restacking by remove + re-add disposes the layer's GPU visual and

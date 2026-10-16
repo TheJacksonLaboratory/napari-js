@@ -5,7 +5,7 @@ import {
   POINTS3D_COLOR_FLOATS,
 } from '../layers/points3d-layer';
 import type { Mat4 } from '../math/mat4';
-import type { BlendMode } from '../layers/layer';
+import { blendingUsesDepth, type BlendMode } from '../layers/layer';
 import { DEPTH_FORMAT, type LayerVisual, type RenderView } from './layer-visual';
 import { buildLut, LUT_SIZE } from '../color/lut';
 import { POINTS3D_SHADER } from './points3d-shader';
@@ -54,6 +54,11 @@ export function packPoints3DUniforms(
  */
 export class Points3DVisual implements LayerVisual {
   readonly ndisplay = 3 as 2 | 3;
+
+  /** Whether its draws write the scene's depth: not under a blending without depth. */
+  get writesDepth(): boolean {
+    return blendingUsesDepth(this.layer.blending);
+  }
 
   private readonly module: GPUShaderModule;
   private readonly uniformBuffer: GPUBuffer;
@@ -209,7 +214,12 @@ export class Points3DVisual implements LayerVisual {
       },
       primitive: { topology: 'triangle-list' },
       // Billboards write depth at the point's center so they occlude within the 3D pass.
-      depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'less' },
+      // A blending without depth (see BlendMode) is neither hidden by depth nor writes it.
+      depthStencil: {
+        format: DEPTH_FORMAT,
+        depthWriteEnabled: blendingUsesDepth(blend),
+        depthCompare: blendingUsesDepth(blend) ? 'less' : 'always',
+      },
     });
   }
 

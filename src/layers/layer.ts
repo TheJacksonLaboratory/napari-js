@@ -5,7 +5,7 @@ import { Emitter } from '../scene/events';
  * part in depth, as napari's (vispy's) presets: `'translucent_no_depth'` blends as `'translucent'`,
  * and it, `'additive'` and `'minimum'` are neither hidden by depth nor write it. A volume of one of
  * them hides no surface inside it (embedded layer sheets, say, show through it); its channels add
- * up in any order. A surface of one is drawn over what is in front of it.
+ * up in any order. A surface or a 3D point of one is drawn over what is in front of it.
  */
 export type BlendMode = 'opaque' | 'translucent' | 'translucent_no_depth' | 'additive' | 'minimum';
 
