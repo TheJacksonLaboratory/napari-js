@@ -139,20 +139,31 @@ describe('VolumeLayer depiction and plane', () => {
       plane: { position: [1, 2, 1], normal: [0, 0, 2], thickness: 3 },
     });
     packVolumeUniforms(out, layer, identity());
-    expect(VOLUME_UNIFORM_FLOATS).toBe(60);
+    expect(VOLUME_UNIFORM_FLOATS).toBe(76);
     expect(Array.from(out.subarray(24, 28))).toEqual([4, 3, 2, 1]);
     expect(Array.from(out.subarray(28, 32))).toEqual([0, 0, 1, -1]);
     expect(Array.from(out.subarray(32, 36))).toEqual([1.5, 0, 0, 0]);
-    expect(Array.from(out.subarray(36))).toEqual(new Array(24).fill(0));
+    expect(Array.from(out.subarray(36, 60))).toEqual(new Array(24).fill(0));
+    // The clip matrix last (the depth each pixel is written at): invMvp's inverse by default.
+    expect(Array.from(out.subarray(60))).toEqual(Array.from(identity()));
     layer.depiction = 'volume';
     packVolumeUniforms(out, layer, identity());
     expect(out[27]).toBe(0);
   });
 
-  it('declares the uniform fields in the packed order, the clipping planes last', () => {
+  it('declares the uniform fields in the packed order, the clipping planes then the clip matrix last', () => {
     const struct = /struct U \{([\s\S]*?)\};/.exec(VOLUME_SHADER)![1];
     const fields = [...struct.matchAll(/^\s*(\w+)\s*:/gm)].map((m) => m[1]);
-    expect(fields).toEqual(['invMvp', 'params', 'params2', 'dims', 'plane', 'plane2', 'clip']);
+    expect(fields).toEqual([
+      'invMvp',
+      'params',
+      'params2',
+      'dims',
+      'plane',
+      'plane2',
+      'clip',
+      'mvp',
+    ]);
     expect(struct).toMatch(/clip : array<vec4<f32>, 6>/);
   });
 });
@@ -239,7 +250,7 @@ describe('volume clipping planes', () => {
     packVolumeUniforms(out, layer, identity());
     expect(out[33]).toBe(2);
     expect(Array.from(out.subarray(36, 44))).toEqual([0, 0, 1, -1, -1, 0, 0, 2]);
-    expect(Array.from(out.subarray(44))).toEqual(new Array(16).fill(0));
+    expect(Array.from(out.subarray(44, 60))).toEqual(new Array(16).fill(0));
   });
 
   it('MultiChannelVolumeView clips every channel, live and for the next render', () => {

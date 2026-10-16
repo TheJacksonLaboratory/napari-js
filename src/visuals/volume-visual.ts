@@ -10,17 +10,24 @@ import { MAX_CLIPPING_PLANES } from '../layers/clipping';
 
 /**
  * mat4(16) + vec4 params + vec4 params2 + vec4 dims + vec4 plane + vec4 plane2 +
- * vec4 clip[MAX_CLIPPING_PLANES] — the layout of `U` in volume-shader.ts.
+ * vec4 clip[MAX_CLIPPING_PLANES] + mat4 mvp(16) — the layout of `U` in volume-shader.ts.
  */
-export const VOLUME_UNIFORM_FLOATS = 36 + 4 * MAX_CLIPPING_PLANES;
+const MVP_OFFSET = 36 + 4 * MAX_CLIPPING_PLANES;
+export const VOLUME_UNIFORM_FLOATS = MVP_OFFSET + 16;
 const UNIFORM_BYTES = VOLUME_UNIFORM_FLOATS * 4;
 const STEPS = 192;
 
 /**
  * Pack the per-frame uniforms (layout in volume-shader.ts) into `out`. Pure, so the packing —
- * the normalized window, the mode and the flags — is testable without a device.
+ * the normalized window, the mode and the flags — is testable without a device. `mvp` (volume
+ * space → clip space, `invMvp`'s inverse) places the depth each pixel is written at.
  */
-export function packVolumeUniforms(out: Float32Array, layer: VolumeLayer, invMvp: Mat4): void {
+export function packVolumeUniforms(
+  out: Float32Array,
+  layer: VolumeLayer,
+  invMvp: Mat4,
+  mvp: Mat4 = invert(invMvp),
+): void {
   out.set(invMvp, 0);
   // The texture is r8unorm, so the shader sees samples in 0..1: normalize the window to match.
   const [lo, hi] = layer.contrastLimits;
@@ -47,8 +54,9 @@ export function packVolumeUniforms(out: Float32Array, layer: VolumeLayer, invMvp
   out[34] = 0;
   out[35] = 0;
   // clip: each clipping plane as a half-space, the rest zero.
-  out.fill(0, 36, VOLUME_UNIFORM_FLOATS);
+  out.fill(0, 36, MVP_OFFSET);
   clipping.forEach((p, i) => out.set(halfSpace(p), 36 + 4 * i));
+  out.set(mvp, MVP_OFFSET);
 }
 
 /**
@@ -145,9 +153,10 @@ export class VolumeVisual implements LayerVisual {
         targets: [{ format: this.format, blend: blendStateFor(blend) }],
       },
       primitive: { topology: 'triangle-list' },
-      // The volume is a full-screen raymarch quad: never depth-test or write, so it composites
-      // exactly as before now that 3D passes carry a depth attachment.
-      depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: false, depthCompare: 'always' },
+      // The volume is a full-screen raymarch quad that writes the depth of what it shows (see
+      // volume-shader.ts), so surfaces and points drawn after it are hidden where it is in front of
+      // them. It is not depth-tested itself: channels added over each other stay whole.
+      depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'always' },
     });
   }
 
@@ -193,7 +202,7 @@ export class VolumeVisual implements LayerVisual {
     const mvp = multiply(view.camera3d.viewProjection(view.vw, view.vh), this.model);
     const invMvp = invert(mvp);
 
-    packVolumeUniforms(this.scratch, this.layer, invMvp);
+    packVolumeUniforms(this.scratch, this.layer, invMvp, mvp);
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.scratch);
 
     pass.setPipeline(this.pipeline);

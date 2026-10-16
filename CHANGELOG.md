@@ -183,6 +183,14 @@ mu })` is Laplacian smoothing, or Taubin with `mu` (keeps the volume). Pure; wor
 
 ### Fixed
 
+- **A volume and the surfaces inside it are drawn by depth.** The volume, a full-screen raymarch,
+  wrote no depth, so every surface drawn with it (a region's reconstruction, a slice plane) showed
+  over it from every side: a region behind the cerebellum still showed through it. Each pixel of
+  the volume now writes the depth of what it shows, as napari's (vispy's) does: MIP at its
+  brightest sample, iso at the surface it hits, translucent at the opacity-weighted depth of what it
+  composited. A surface or point behind that is hidden; one in front is drawn over the volume.
+  Volumes are still not depth-tested against each other, so added channels stay whole.
+
 - **Iso-surface lighting**: the volume shader lit the iso-surface by the density gradient, which
   points into the surface, so the faces toward the light got only the ambient term. It uses the
   outward normal now. Found by the GPU tests.
