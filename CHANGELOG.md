@@ -7,6 +7,15 @@ All notable changes to napari-js are documented here. The format roughly follows
 
 ### Added
 
+- **`'translucent_no_depth'` blending** (napari's), and blendings without depth in 3D. Only
+  `'opaque'` and `'translucent'` take part in depth, as napari's (vispy's) presets:
+  `'translucent_no_depth'` blends as `'translucent'`, and it, `'additive'` and `'minimum'` are
+  neither hidden by depth nor write it (`blendingUsesDepth`). A volume of one of them hides no
+  surface inside it: layer boundaries traced inside the bright bands of an OCT volume, which a
+  `'translucent'` volume's depth (its brightest sample) speckles or hides, show through it whole.
+  An `'additive'` multichannel volume no longer writes depth (nor raymarches its depth a second
+  time). A surface of one of them is drawn over what is in front of it.
+
 - **`LayerList.move(layer, index)` and `LayerList.insert(index, layer)`** (napari's
   `LayerList.move`/`insert`). Restacking by remove + re-add disposes the layer's GPU visual and
   re-uploads its whole buffer on the next frame; `move` only reorders `items`, emitting `moved`

@@ -1,6 +1,18 @@
 import { Emitter } from '../scene/events';
 
-export type BlendMode = 'opaque' | 'translucent' | 'additive' | 'minimum';
+/**
+ * How a layer is composited (napari's `blending`). In 3D only `'opaque'` and `'translucent'` take
+ * part in depth, as napari's (vispy's) presets: `'translucent_no_depth'` blends as `'translucent'`,
+ * and it, `'additive'` and `'minimum'` are neither hidden by depth nor write it. A volume of one of
+ * them hides no surface inside it (embedded layer sheets, say, show through it); its channels add
+ * up in any order. A surface of one is drawn over what is in front of it.
+ */
+export type BlendMode = 'opaque' | 'translucent' | 'translucent_no_depth' | 'additive' | 'minimum';
+
+/** Whether a 3D layer of this blending takes part in depth (see {@link BlendMode}). */
+export function blendingUsesDepth(mode: BlendMode): boolean {
+  return mode === 'opaque' || mode === 'translucent';
+}
 
 let nextLayerId = 0;
 

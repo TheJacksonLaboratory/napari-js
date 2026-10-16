@@ -1,5 +1,5 @@
 import type { VolumeLayer } from '../layers/volume-layer';
-import type { BlendMode } from '../layers/layer';
+import { blendingUsesDepth, type BlendMode } from '../layers/layer';
 import { DEPTH_FORMAT, type LayerVisual, type RenderView } from './layer-visual';
 import { multiply, scale3d, translate3d, invert, type Mat4 } from '../math/mat4';
 import { buildLut, LUT_SIZE } from '../color/lut';
@@ -66,6 +66,11 @@ export function packVolumeUniforms(
  */
 export class VolumeVisual implements LayerVisual {
   readonly ndisplay = 3 as 2 | 3;
+
+  /** Whether its draws write depth: not under a blending without depth (see BlendMode). */
+  get writesDepth(): boolean {
+    return blendingUsesDepth(this.layer.blending);
+  }
 
   private readonly module: GPUShaderModule;
   private readonly uniformBuffer: GPUBuffer;
@@ -160,7 +165,8 @@ export class VolumeVisual implements LayerVisual {
    * order. Its depth must be the nearest of everything drawn, though (a farther channel drawn last
    * must not undo a nearer one's occlusion), so over depth already written it draws twice:
    * `'color'` (no depth), then `'depth'` (no colour, the nearer depth kept). On a clear depth
-   * buffer one `'both'` draw does the same.
+   * buffer one `'both'` draw does the same. A blending without depth (`'translucent_no_depth'`,
+   * `'additive'`, `'minimum'`) writes none: its `'both'` draw is its colour alone.
    */
   private buildPipeline(blend: BlendMode, writes: 'both' | 'color' | 'depth'): GPURenderPipeline {
     return this.device.createRenderPipeline({
@@ -178,7 +184,7 @@ export class VolumeVisual implements LayerVisual {
       primitive: { topology: 'triangle-list' },
       depthStencil: {
         format: DEPTH_FORMAT,
-        depthWriteEnabled: writes !== 'color',
+        depthWriteEnabled: writes !== 'color' && (writes === 'depth' || blendingUsesDepth(blend)),
         depthCompare: writes === 'depth' ? 'less' : 'always',
       },
     });
@@ -231,7 +237,7 @@ export class VolumeVisual implements LayerVisual {
     packVolumeUniforms(this.scratch, this.layer, invMvp, mvp);
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.scratch);
 
-    if (view.depthClear) {
+    if (view.depthClear || !blendingUsesDepth(this.currentBlend)) {
       pass.setPipeline(this.pipeline);
       pass.setBindGroup(0, this.bindGroup);
       pass.draw(6);

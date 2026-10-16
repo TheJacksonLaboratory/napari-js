@@ -1,6 +1,6 @@
 import type { SurfaceLayer } from '../layers/surface-layer';
 import { SURFACE_VERTEX_FLOATS } from '../layers/surface-layer';
-import type { BlendMode } from '../layers/layer';
+import { blendingUsesDepth, type BlendMode } from '../layers/layer';
 import {
   DEPTH_FORMAT,
   NEAREST_DEPTH_FORMAT,
@@ -199,7 +199,12 @@ export class SurfaceVisual implements LayerVisual {
       primitive,
       // Hidden by what is in front of it (opaque geometry, a volume), writing no depth itself, so
       // other translucent surfaces behind it (a region inside another) still show through it.
-      depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: false, depthCompare: 'less' },
+      // 'translucent_no_depth': drawn over what is in front of it too.
+      depthStencil: {
+        format: DEPTH_FORMAT,
+        depthWriteEnabled: false,
+        depthCompare: blendingUsesDepth(blend) ? 'less' : 'always',
+      },
     });
     this.nearestPasses = {
       blend,
@@ -284,7 +289,11 @@ export class SurfaceVisual implements LayerVisual {
       // A translucent surface is depth-tested (opaque geometry in front hides it) but does not
       // write depth, so what is drawn behind it after it still shows through. (Filled, it is drawn
       // by drawDepth and drawNearest instead: this is its wireframe.)
-      depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: !translucent, depthCompare: 'less' },
+      depthStencil: {
+        format: DEPTH_FORMAT,
+        depthWriteEnabled: !translucent && blendingUsesDepth(blend),
+        depthCompare: blendingUsesDepth(blend) ? 'less' : 'always',
+      },
     });
   }
 

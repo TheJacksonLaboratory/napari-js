@@ -38,11 +38,11 @@ describeGpu('A volume and the surfaces inside it, by depth', () => {
   };
 
   it("keeps the nearest channel's depth: a farther channel drawn after it does not undo its occlusion", async () => {
-    // Two additive channels, a bright slab near the camera and one far from it, the quad between.
+    // Two channels (translucent: additive ones take no part in depth), a bright slab near the camera and one far from it, the quad between.
     const near = viewer.addVolume(slab(N - 7, N - 3), N, N, N, {
       rendering: 'mip',
       colormap: 'gray',
-      blending: 'additive',
+      blending: 'translucent',
     });
     viewer.addVolume(slab(2, 6), N, N, N, {
       rendering: 'mip',
@@ -59,6 +59,40 @@ describeGpu('A volume and the surfaces inside it, by depth', () => {
     const [r2, g2] = pixel(await viewer.readDisplayedPixels(), C, C);
     expect(Math.abs(r2 - g2)).toBeLessThanOrEqual(4);
     expect(g2).toBeGreaterThan(200);
+  });
+
+  for (const blending of ['translucent_no_depth', 'additive'] as const) {
+    it(`a ${blending} volume hides no surface inside it`, async () => {
+      // The bright slab near the camera, the quad behind it: drawn over the volume all the same.
+      viewer.addVolume(slab(N - 7, N - 3), N, N, N, {
+        rendering: 'mip',
+        colormap: 'gray',
+        blending,
+      });
+      addQuad(viewer);
+      faceOn();
+      const [r, g] = pixel(await viewer.readDisplayedPixels(), C, C);
+      expect(r).toBeGreaterThan(g + 60);
+    });
+  }
+
+  it('a translucent_no_depth surface is drawn over an opaque one in front of it', async () => {
+    viewer.addSurface(
+      Float32Array.of(-6, -6, 5, 6, -6, 5, 6, 6, 5, -6, 6, 5),
+      Uint32Array.of(0, 1, 2, 0, 2, 3),
+      undefined,
+      { color: '#00ff00' },
+    );
+    viewer.addSurface(
+      Float32Array.of(-6, -6, -5, 6, -6, -5, 6, 6, -5, -6, 6, -5),
+      Uint32Array.of(0, 1, 2, 0, 2, 3),
+      undefined,
+      { color: '#ff0000', opacity: 0.6, blending: 'translucent_no_depth', fit: 'never' },
+    );
+    faceOn();
+    const [r, g] = pixel(await viewer.readDisplayedPixels(), C, C);
+    expect(r).toBeGreaterThan(100);
+    expect(g).toBeGreaterThan(40);
   });
 
   for (const rendering of ['mip', 'iso', 'translucent'] as const) {
