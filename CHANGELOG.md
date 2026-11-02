@@ -5,6 +5,16 @@ All notable changes to napari-js are documented here. The format roughly follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Filled shapes that are not star-convex are ear-clipped, not fanned.** `ringsToFan` fanned a
+  ring with no point that sees all of it (a spread cell traced around its mask, a lobed region)
+  from its vertex mean, so the fan overlapped itself and spilled out of the ring: at a translucent
+  fill, streaks across the neighbouring cells (86% of a Cytos HeLa well's cells). Such a ring is now
+  triangulated by ear clipping (`earClipRing`, exported): n − 2 triangles inside it, padded with
+  two empty ones so a ring still takes 3n vertices. A ring that crosses itself is still drawn.
+  Star-convex rings keep their fan.
+
 ### Added
 
 - **`'translucent_no_depth'` blending** (napari's), and blendings without depth in 3D. Only

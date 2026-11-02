@@ -195,16 +195,17 @@ export function polygonKernelPoint(
 }
 
 /**
- * Rings → a triangle-list fan around a point inside each ring.
+ * Rings → a triangle list filling each ring: 3n vertices for a ring of n.
  *
- * A ring of n vertices yields n triangles, each `(apex, vᵢ, vᵢ₊₁)`, and 3n
- * vertices. The apex comes from {@link polygonKernelPoint}, so the fan is exact
- * for every **star-convex** ring — which cell and nucleus boundaries are.
+ * A **star-convex** ring (most cell and nucleus boundaries) is fanned from a point
+ * of its kernel ({@link polygonKernelPoint}): n triangles `(apex, vᵢ, vᵢ₊₁)`.
  *
- * A ring whose kernel is empty is not star-convex at all (a lobed tissue-region
- * annotation, say): no single apex can triangulate it, and it needs a general
- * triangulation, which this deliberately is not. Such a ring falls back to the
- * vertex mean and may self-overlap — visibly wrong rather than silently dropped.
+ * A ring whose kernel is empty is not star-convex (a lobed tissue-region
+ * annotation; a spread cell such as a HeLa cell, traced around its mask): no
+ * single apex can fill it, and a fan from any point overlaps itself and spills
+ * outside the ring, which at a translucent fill shows as streaks across the
+ * neighbours. Such a ring is ear-clipped instead ({@link earClipRing}): n − 2
+ * triangles, padded with two empty ones so every ring still takes 3n vertices.
  *
  * Pure and GPU-free.
  */
@@ -218,22 +219,12 @@ export function ringsToFan(coords: Float32Array, offsets: Uint32Array): ShapeGeo
     const n = offsets[s + 1] - start;
     if (n < 3) continue;
     const kernel = polygonKernelPoint(coords, start, n);
-    let cx: number;
-    let cy: number;
-    if (kernel) {
-      [cx, cy] = kernel;
-    } else {
-      // Not star-convex: no apex works. The vertex mean keeps the shape roughly
-      // where it belongs instead of dropping it.
-      cx = 0;
-      cy = 0;
-      for (let i = 0; i < n; i++) {
-        cx += coords[(start + i) * 2];
-        cy += coords[(start + i) * 2 + 1];
-      }
-      cx /= n;
-      cy /= n;
+    if (!kernel) {
+      // Not star-convex: no apex works.
+      w = earClipRing(coords, start, n, positions, shapeIds, w, s);
+      continue;
     }
+    const [cx, cy] = kernel;
     for (let i = 0; i < n; i++) {
       const a = start + i;
       const b = start + ((i + 1) % n);
@@ -252,6 +243,107 @@ export function ringsToFan(coords: Float32Array, offsets: Uint32Array): ShapeGeo
     }
   }
   return { positions, shapeIds, count: total };
+}
+
+/**
+ * Ear-clip one ring into `positions` / `shapeIds` from vertex `w`, as shape `shape`; returns the
+ * next free vertex, always `w + 3n`.
+ *
+ * An ear is a convex vertex whose triangle with its two neighbours holds no other remaining
+ * vertex; cutting it off leaves a simple ring one vertex shorter, so n − 2 cuts fill the ring
+ * exactly, with no triangle outside it. Only reflex vertices can lie in an ear's triangle, so
+ * only they are tested. The two triangles a fan would have had over are written empty (all three
+ * corners on the ring's first vertex), keeping each ring at 3n vertices, as {@link
+ * shapeVertexCount} counts them.
+ *
+ * A ring that is not simple (it crosses itself) can run out of ears; then the vertex at hand is
+ * cut anyway, so the ring is still drawn, overlapping where it crosses, rather than dropped.
+ *
+ * O(n · r) for n vertices of which r are reflex: a few hundred vertices are nothing.
+ */
+export function earClipRing(
+  coords: Float32Array,
+  start: number,
+  n: number,
+  positions: Float32Array,
+  shapeIds: Uint32Array,
+  w: number,
+  shape: number,
+): number {
+  const x = (i: number): number => coords[(start + i) * 2];
+  const y = (i: number): number => coords[(start + i) * 2 + 1];
+  let area2 = 0;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    area2 += x(i) * y(j) - x(j) * y(i);
+  }
+  const sign = area2 >= 0 ? 1 : -1;
+  const prev = new Int32Array(n);
+  const next = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    prev[i] = (i + n - 1) % n;
+    next[i] = (i + 1) % n;
+  }
+  /** Twice the signed area of (a, b, c), positive when it turns the ring's way. */
+  const turn = (a: number, b: number, c: number): number =>
+    sign * ((x(b) - x(a)) * (y(c) - y(a)) - (y(b) - y(a)) * (x(c) - x(a)));
+  const reflex = new Uint8Array(n);
+  for (let i = 0; i < n; i++) reflex[i] = turn(prev[i], i, next[i]) <= 0 ? 1 : 0;
+
+  const emit = (a: number, b: number, c: number): void => {
+    for (const v of [a, b, c]) {
+      positions[w * 2] = x(v);
+      positions[w * 2 + 1] = y(v);
+      shapeIds[w] = shape;
+      w++;
+    }
+  };
+  /** Whether p is inside or on triangle (a, b, c), which turns the ring's way. */
+  const inTriangle = (a: number, b: number, c: number, p: number): boolean =>
+    turn(a, b, p) >= 0 && turn(b, c, p) >= 0 && turn(c, a, p) >= 0;
+  const isEar = (i: number): boolean => {
+    if (reflex[i]) return false;
+    const a = prev[i];
+    const c = next[i];
+    for (let p = next[c]; p !== a; p = next[p]) {
+      // A vertex at the same place as a corner (a pinch) does not block the ear.
+      if (!reflex[p]) continue;
+      if ((x(p) === x(a) && y(p) === y(a)) || (x(p) === x(c) && y(p) === y(c))) continue;
+      if (inTriangle(a, i, c, p)) return false;
+    }
+    return true;
+  };
+
+  let remaining = n;
+  let i = 0;
+  let sinceCut = 0;
+  while (remaining > 3) {
+    if (isEar(i) || sinceCut >= remaining) {
+      const a = prev[i];
+      const c = next[i];
+      emit(a, i, c);
+      next[a] = c;
+      prev[c] = a;
+      remaining--;
+      reflex[a] = turn(prev[a], a, next[a]) <= 0 ? 1 : 0;
+      reflex[c] = turn(prev[c], c, next[c]) <= 0 ? 1 : 0;
+      sinceCut = 0;
+      // Back to the neighbour: cutting an ear can make the one before it an ear.
+      i = a;
+    } else {
+      i = next[i];
+      sinceCut++;
+    }
+  }
+  emit(prev[i], i, next[i]);
+  // Pad to 3n: two empty triangles on the first vertex.
+  for (let k = 0; k < 6; k++) {
+    positions[w * 2] = x(0);
+    positions[w * 2 + 1] = y(0);
+    shapeIds[w] = shape;
+    w++;
+  }
+  return w;
 }
 
 /**
