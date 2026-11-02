@@ -242,8 +242,71 @@ describe('fan apex', () => {
     // exact and the caller has to know that.
     const comb = Float32Array.from([0, 0, 6, 0, 6, 6, 4, 1, 3, 6, 2, 1, 0, 6]);
     expect(polygonKernelPoint(comb, 0, 7)).toBeNull();
-    // It still draws — visibly overlapping — rather than being dropped.
+    // It is still drawn, as 3n vertices like any ring — but ear-clipped, not fanned.
     expect(ringsToFan(comb, new Uint32Array([0, 7])).count).toBe(21);
+  });
+
+  /** Twice a triangle's area, unsigned. */
+  const tri2 = (p: Float32Array, t: number): number =>
+    Math.abs(
+      (p[t * 6 + 2] - p[t * 6]) * (p[t * 6 + 5] - p[t * 6 + 1]) -
+        (p[t * 6 + 3] - p[t * 6 + 1]) * (p[t * 6 + 4] - p[t * 6]),
+    );
+  const ringArea2 = (r: number[]): number => {
+    let a = 0;
+    for (let i = 0; i < r.length / 2; i++) {
+      const j = (i + 1) % (r.length / 2);
+      a += r[i * 2] * r[j * 2 + 1] - r[j * 2] * r[i * 2 + 1];
+    }
+    return Math.abs(a);
+  };
+  /** A ring that is not star-convex fills exactly: its triangles lie inside it and add up to it. */
+  const fillsExactly = (ring: number[]): void => {
+    const n = ring.length / 2;
+    const coords = Float32Array.from(ring);
+    expect(polygonKernelPoint(coords, 0, n)).toBeNull();
+    const { positions, shapeIds, count } = ringsToFan(coords, new Uint32Array([0, n]));
+    expect(count).toBe(3 * n);
+    expect([...shapeIds].every((s) => s === 0)).toBe(true);
+    let sum = 0;
+    for (let t = 0; t < n; t++) {
+      const a = tri2(positions, t);
+      sum += a;
+      if (a === 0) continue;
+      const cx = (positions[t * 6] + positions[t * 6 + 2] + positions[t * 6 + 4]) / 3;
+      const cy = (positions[t * 6 + 1] + positions[t * 6 + 3] + positions[t * 6 + 5]) / 3;
+      expect(inside(ring, cx, cy)).toBe(true);
+    }
+    expect(sum).toBeCloseTo(ringArea2(ring), 3);
+  };
+
+  it('ear-clips a ring that is not star-convex, so no triangle leaves it', () => {
+    // The comb, which a fan from any point overlaps and spills out of.
+    fillsExactly([0, 0, 6, 0, 6, 6, 4, 1, 3, 6, 2, 1, 0, 6]);
+  });
+
+  it('ear-clips a ring wound either way', () => {
+    // A "U" (two arms around a notch), counter-clockwise and clockwise.
+    const u = [0, 0, 9, 0, 9, 9, 6, 9, 6, 3, 3, 3, 3, 9, 0, 9];
+    fillsExactly(u);
+    const cw: number[] = [];
+    for (let i = u.length / 2 - 1; i >= 0; i--) cw.push(u[i * 2], u[i * 2 + 1]);
+    fillsExactly(cw);
+  });
+
+  it('ear-clips a staircase traced around a mask, the shape of a spread cell', () => {
+    // An "S" of blocks: stair steps on both sides, reflex corners everywhere.
+    fillsExactly([
+      0, 0, 4, 0, 4, 2, 6, 2, 6, 4, 8, 4, 8, 10, 4, 10, 4, 8, 2, 8, 2, 6, 6, 6, 6, 5, 3, 5, 3, 4, 0, 4,
+    ]);
+  });
+
+  it('still draws a ring that crosses itself, rather than dropping it', () => {
+    // A bow tie: no ear exists once it is cut, and the forced cut keeps it whole.
+    const bow = Float32Array.from([0, 0, 4, 4, 4, 0, 0, 4]);
+    const { count, shapeIds } = ringsToFan(bow, new Uint32Array([0, 4]));
+    expect(count).toBe(12);
+    expect([...shapeIds].every((s) => s === 0)).toBe(true);
   });
 
   it('reports no apex for a degenerate ring', () => {

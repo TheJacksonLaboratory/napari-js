@@ -84,6 +84,7 @@ export {
   polygonKernelPoint,
   ringsToOutline,
   ringsToFan,
+  earClipRing,
   shapeVertexCount,
 } from './layers/shapes-layer';
 export type { ShapesLayerOptions, ShapeDraw, ShapeGeometry } from './layers/shapes-layer';
