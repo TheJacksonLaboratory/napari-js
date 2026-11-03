@@ -5,6 +5,7 @@ import {
   SOFTWARE,
   coverage,
   describeGpu,
+  litBox,
   disposeViewer,
   makeViewer,
   maxDiff,
@@ -117,6 +118,46 @@ describeGpu('2D layers on the GPU', () => {
     // π·10² of 64² px.
     expect(coverage(px)).toBeGreaterThan(0.06);
     expect(coverage(px)).toBeLessThan(0.095);
+  });
+
+  it('draws a marker smaller than a pixel at its minScreenSize, through an anisotropic scale', async () => {
+    // 0.02 data units across at zoom 1 is a fiftieth of a pixel: without the floor, nothing shows.
+    const add = (minScreenSize: number, scale: [number, number] = [1, 1]) =>
+      viewer.addPoints([[32 / scale[0], 32 / scale[1]]], {
+        size: 0.02,
+        faceColor: [1, 0, 0, 1],
+        borderWidth: 0,
+        minScreenSize,
+        scale,
+      });
+    viewer.camera.set([32, 32], 1);
+    const bare = add(0);
+    expect(coverage(await viewer.readDisplayedPixels())).toBe(0);
+
+    // A 10 px floor: a disc 10 px across, centred on the point.
+    bare.minScreenSize = 10;
+    let px = await viewer.readDisplayedPixels();
+    expect(maxDiff(pixel(px, 32, 32), [255, 0, 0, 255])).toBeLessThanOrEqual(TOL);
+    let [x0, y0, x1, y1] = litBox(px, 16);
+    expect(x1 - x0 + 1).toBeGreaterThanOrEqual(9);
+    expect(x1 - x0 + 1).toBeLessThanOrEqual(11);
+    expect(y1 - y0 + 1).toBeGreaterThanOrEqual(9);
+    expect(y1 - y0 + 1).toBeLessThanOrEqual(11);
+    // Zoomed in until the data size is the larger, the floor stops mattering: 0.02 × 2000 = 40 px.
+    viewer.camera.set([32, 32], 2000);
+    px = await viewer.readDisplayedPixels();
+    [x0, , x1] = litBox(px, 16);
+    expect(x1 - x0 + 1).toBeGreaterThanOrEqual(38);
+    viewer.layers.remove(bare);
+
+    // Scale [2, 0.5]: the smaller axis reaches the floor (8 px); the other is four times as wide.
+    viewer.camera.set([32, 32], 1);
+    add(8, [2, 0.5]);
+    px = await viewer.readDisplayedPixels();
+    [x0, y0, x1, y1] = litBox(px, 16);
+    expect(y1 - y0 + 1).toBeGreaterThanOrEqual(7);
+    expect(y1 - y0 + 1).toBeLessThanOrEqual(9);
+    expect(x1 - x0 + 1).toBeGreaterThanOrEqual(30);
   });
 
   it('fills a shape, or draws only its outline', async () => {

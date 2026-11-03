@@ -12,13 +12,18 @@ All notable changes to napari-js are documented here. The format roughly follows
   scale is a uniform the vertex shader multiplies in; `pick` maps the ray into the vertices' frame
   and the hit point back), so stretching a view's Z by dragging no longer rewrites and re-uploads
   every region surface's vertices. `transformVersion` moves with it, `dataVersion` does not.
-  Clipping planes stay in the vertices' own coordinates. Default `[1, 1, 1]`: unchanged.
+  Picking uses a unit ray in the vertices' frame (distances converted back), so a small mesh scaled
+  up is hit as the same mesh with the scale baked in. Bounds come from the vertices' extent, cached
+  per `dataVersion`, so a scale change re-bounds in constant time (the translucent draw order asks
+  every frame). Clipping planes stay in the vertices' own coordinates. Default `[1, 1, 1]`: unchanged.
 - **`PointsLayer.minScreenSize`: markers never drawn smaller than a number of canvas pixels.** A
   marker's size is in data units, so zoomed out over a large slide (a Cytos plate, a Xenium
   section) every cell fell below a pixel and the field vanished. With `minScreenSize` set, the
   shader draws each marker at `max(size, minScreenSize / (zoom × scale))`: its data size when it
   is big enough on screen, the floor otherwise. A uniform (`minSizeAt(zoom)`, packed as the fourth
-  points parameter), so zooming does not rebuild the instances. Default 0: unchanged.
+  points parameter), so zooming does not rebuild the instances. `pick()` takes the camera's `zoom`
+  (`PointsPickOptions.zoom`) to hit a marker at the size it is drawn, floor included; a caller's
+  `radiusAt` still wins. Default 0: unchanged.
 
 ## [0.19.0]
 
