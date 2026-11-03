@@ -138,6 +138,37 @@ describe('points uniforms', () => {
     expect(Array.from(out.subarray(0, 16))).toEqual(Array.from(identity()));
     expect(Array.from(out.subarray(16, 20))).toEqual([13, 0.5, 2, 0]);
   });
+
+  it('packs the minimum screen size as a data-unit diameter at the camera zoom', () => {
+    const out = new Float32Array(POINTS_UNIFORM_FLOATS);
+    const p = new PointsLayer(PTS, { minScreenSize: 3, scale: [2, 4] });
+    // 0.5 canvas px per world unit, 2 world units per data unit (the smaller axis): 1 px per
+    // data unit, so 3 px is 3 data units.
+    packPointsUniforms(out, p, identity(), 0.5);
+    expect(out[19]).toBeCloseTo(3, 6);
+    // Zoomed in tenfold, the floor is a tenth as many data units.
+    packPointsUniforms(out, p, identity(), 5);
+    expect(out[19]).toBeCloseTo(0.3, 6);
+    // Without a zoom (or a floor) there is none.
+    packPointsUniforms(out, p, identity());
+    expect(out[19]).toBe(0);
+    p.minScreenSize = 0;
+    packPointsUniforms(out, p, identity(), 0.5);
+    expect(out[19]).toBe(0);
+  });
+
+  it('minScreenSize is a uniform: it emits without rebuilding the instances, and rejects nonsense', () => {
+    const p = new PointsLayer(PTS);
+    expect(p.minScreenSize).toBe(0);
+    const v = p.dataVersion;
+    let emitted = 0;
+    p.changed.connect(() => emitted++);
+    p.minScreenSize = 2;
+    expect(emitted).toBe(1);
+    expect(p.dataVersion).toBe(v);
+    expect(() => (p.minScreenSize = -1)).toThrow(/minScreenSize/);
+    expect(() => new PointsLayer(PTS, { minScreenSize: NaN })).toThrow(/minScreenSize/);
+  });
 });
 
 describe('pointSymbolDistance (CPU reference of the shader)', () => {
@@ -212,7 +243,8 @@ describe('points shader contract', () => {
   it('reads the per-point code flat, deferring to the layer code when negative', () => {
     expect(POINTS_SHADER).toContain('@location(4) @interpolate(flat) symbol : f32');
     expect(POINTS_SHADER).toContain('select(symbol, u.params.x, symbol < 0.0)');
-    expect(POINTS_SHADER).toContain('u.params.z / max(size, 1e-6)'); // borderWidth uniform
+    expect(POINTS_SHADER).toContain('u.params.z / max(drawn, 1e-6)'); // borderWidth uniform
+    expect(POINTS_SHADER).toContain('let drawn = max(size, u.params.w);');
     expect(POINTS_SHADER).toContain('if (code == 1u) { a = a * borderMix; }'); // ring
   });
 });

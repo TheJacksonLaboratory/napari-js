@@ -5,6 +5,15 @@ All notable changes to napari-js are documented here. The format roughly follows
 
 ## [Unreleased]
 
+### Added
+
+- **`PointsLayer.minScreenSize`: markers never drawn smaller than a number of canvas pixels.** A
+  marker's size is in data units, so zoomed out over a large slide (a Cytos plate, a Xenium
+  section) every cell fell below a pixel and the field vanished. With `minScreenSize` set, the
+  shader draws each marker at `max(size, minScreenSize / (zoom × scale))`: its data size when it
+  is big enough on screen, the floor otherwise. A uniform (`minSizeAt(zoom)`, packed as the fourth
+  points parameter), so zooming does not rebuild the instances. Default 0: unchanged.
+
 ## [0.19.0]
 
 Filled shapes that are not star-convex fill exactly, and a 3D point cloud can be stretched per axis

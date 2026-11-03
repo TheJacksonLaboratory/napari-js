@@ -7,7 +7,7 @@ import { POINTS_SHADER } from './points-shader';
 import { blendStateFor } from './blend';
 
 const STRIDE_BYTES = POINTS_INSTANCE_STRIDE * 4; // 48
-/** mat4(16) + params vec4: layer symbol code, opacity, borderWidth, 0. */
+/** mat4(16) + params vec4: layer symbol code, opacity, borderWidth, min diameter (data units). */
 export const POINTS_UNIFORM_FLOATS = 20;
 const UNIFORM_FLOATS = POINTS_UNIFORM_FLOATS;
 const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
@@ -16,12 +16,17 @@ const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
  * Pack the per-frame uniforms (layout in points-shader.ts) into `out`. Pure, so what reaches
  * the shader is testable without a device.
  */
-export function packPointsUniforms(out: Float32Array, layer: PointsLayer, mvp: Mat4): void {
+export function packPointsUniforms(
+  out: Float32Array,
+  layer: PointsLayer,
+  mvp: Mat4,
+  zoom = 0,
+): void {
   out.set(mvp, 0);
   out[16] = layer.symbolCode();
   out[17] = layer.opacity;
   out[18] = layer.borderWidth;
-  out[19] = 0;
+  out[19] = layer.minSizeAt(zoom);
 }
 
 /** Renders a {@link PointsLayer} as instanced SDF markers. */
@@ -114,7 +119,7 @@ export class PointsVisual implements LayerVisual {
         this.layer.translate[1],
       ),
     );
-    packPointsUniforms(this.scratch, this.layer, mvp);
+    packPointsUniforms(this.scratch, this.layer, mvp, view.camera2d.zoom);
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.scratch);
 
     const bindGroup = this.device.createBindGroup({
