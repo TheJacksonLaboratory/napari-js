@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { SurfaceLayer } from '../src/layers/surface-layer';
 import { packSurfaceUniforms, SURFACE_UNIFORM_FLOATS } from '../src/visuals/surface-visual';
@@ -66,5 +66,63 @@ describe('SurfaceLayer scale3d', () => {
     expect(Array.from(out.subarray(32, 36))).toEqual([1, 2, 3, 0]);
     expect(SURFACE_SHADER).toContain('let world = pos * u.scale.xyz;');
     expect(SURFACE_SHADER).toContain('clippedAway(in.vertexPos)');
+  });
+});
+
+describe('SurfaceLayer scale3d picking and bounds', () => {
+  it('picks a scaled mesh as the same mesh with the scale baked in, small source coordinates included', () => {
+    // 0.0001 units wide, scaled by 1e6: about 100 world units wide at z = 100.
+    const tiny = Float32Array.of(0, 0, 0.0001, 0.0001, 0, 0.0001, 0, 0.0001, 0.0001);
+    const scaled = new SurfaceLayer(tiny, Uint32Array.of(0, 1, 2), undefined, {
+      scale3d: [1e6, 1e6, 1e6],
+    });
+    const baked = new SurfaceLayer(
+      tiny.map((v) => v * 1e6),
+      Uint32Array.of(0, 1, 2),
+    );
+    const ray = {
+      origin: [25, 25, 200] as [number, number, number],
+      dir: [0, 0, -1] as [number, number, number],
+    };
+    const want = baked.pick(ray)!;
+    const got = scaled.pick(ray)!;
+    expect(want).not.toBeNull();
+    expect(got).not.toBeNull();
+    expect(got.distance).toBeCloseTo(want.distance, 3);
+    got.point.forEach((v, a) => expect(v).toBeCloseTo(want.point[a], 3));
+    // A finite ray stops at its own length in world units, as for the baked mesh.
+    expect(scaled.pick({ ...ray, length: 99 })).toBeNull();
+    expect(scaled.pick({ ...ray, length: 101 })).not.toBeNull();
+  });
+
+  it('picks along an oblique ray under a non-uniform scale at the world distance', () => {
+    const s = new SurfaceLayer(
+      Float32Array.of(-1, -1, 1, 1, -1, 1, 0, 1, 1),
+      Uint32Array.of(0, 1, 2),
+      undefined,
+      { scale3d: [3, 1, 10] },
+    );
+    const d = Math.SQRT1_2;
+    // From (0, 0, 20) down and along x at 45°: the drawn plane z = 10 is met 10·√2 along the ray.
+    const hit = s.pick({ origin: [-10, 0, 20], dir: [d, 0, -d] })!;
+    expect(hit.distance).toBeCloseTo(10 * Math.SQRT2, 5);
+    expect(hit.point[0]).toBeCloseTo(0, 5);
+    expect(hit.point[2]).toBeCloseTo(10, 5);
+  });
+
+  it('re-bounds a scale change from the cached extent, walking the mesh only when it changes', () => {
+    const s = new SurfaceLayer(Float32Array.of(0, 0, 1, 2, 0, 1, 0, 2, 3), Uint32Array.of(0, 1, 2));
+    const walk = vi.spyOn(s as unknown as { computeExtent(): unknown }, 'computeExtent');
+    for (let k = 1; k <= 20; k++) {
+      s.scale3d = [1, 1, k];
+      expect(s.bounds().max[2]).toBeCloseTo(3 * k, 9);
+    }
+    expect(walk).toHaveBeenCalledTimes(1);
+    const b = s.bounds();
+    expect(b.center).toEqual([1, 1, 2 * 20]);
+    expect(b.radius).toBeCloseTo(0.5 * Math.hypot(2, 2, 2 * 20), 9);
+    s.setData(Float32Array.of(0, 0, 0, 4, 0, 0, 0, 4, 0), Uint32Array.of(0, 1, 2));
+    expect(s.bounds().max[0]).toBe(4);
+    expect(walk).toHaveBeenCalledTimes(2);
   });
 });

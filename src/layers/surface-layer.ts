@@ -100,8 +100,13 @@ export class SurfaceLayer extends Layer {
   private _color: RGBA | null = null;
   private _vertexColors: Float32Array | null = null;
   private _clippingPlanes: ClippingPlane[] = [];
-  /** {@link bounds}, kept until the next {@link setData} or {@link scale3d} change. */
-  private _bounds: { version: number; transform: number; bounds: SurfaceBounds } | null = null;
+  /** The vertices' own min/max (before {@link scale3d}), kept until the next {@link setData}: a
+   *  scale change re-bounds the surface from them, without walking the mesh again. */
+  private _extent: {
+    version: number;
+    min: [number, number, number];
+    max: [number, number, number];
+  } | null = null;
   /** Whether a per-vertex colour has alpha below 1, as of {@link colorVersion}. */
   private _vertexAlpha: { version: number; partial: boolean } | null = null;
 
@@ -327,8 +332,10 @@ export class SurfaceLayer extends Layer {
   }
 
   /**
-   * The nearest triangle `ray` hits (world coordinates, the mesh's own: a surface is drawn
-   * untransformed), either side, skipping what the {@link clippingPlanes} cut away; or null. Ignores
+   * The nearest triangle `ray` hits (world coordinates: the mesh as drawn, its vertices times
+   * {@link scale3d}; a unit direction), either side, skipping what the {@link clippingPlanes} (in the
+   * vertices' own coordinates) cut away; or null. The hit's distance is along `ray`, its point in
+   * world coordinates. Ignores
    * {@link visible} — see {@link ViewerBase.pickSurface} for picking what is on screen. Hits beyond
    * the ray's {@link Ray.length} (a {@link screenRay}'s far plane) do not count. A bounding-box test
    * first, so a miss costs nothing per triangle.
@@ -344,17 +351,24 @@ export class SurfaceLayer extends Layer {
         maxDistance,
       });
     }
-    // Into the vertices' own frame: origin and direction divided by the scale keep the ray's
-    // parameter, so a hit's distance along it is unchanged and only its point is scaled back.
+    // Into the vertices' own frame (where the clipping planes are): the origin divided by the scale,
+    // the direction too and then made unit again, as the intersection's tolerance expects. A world
+    // distance t along the (unit) ray is `t * len` along the local one; the hit comes back as world.
+    const dx = ray.dir[0] / sx;
+    const dy = ray.dir[1] / sy;
+    const dz = ray.dir[2] / sz;
+    const len = Math.hypot(dx, dy, dz);
+    if (!(len > 0) || !Number.isFinite(len)) return null;
     const local: Ray = {
       origin: [ray.origin[0] / sx, ray.origin[1] / sy, ray.origin[2] / sz],
-      dir: [ray.dir[0] / sx, ray.dir[1] / sy, ray.dir[2] / sz],
+      dir: [dx / len, dy / len, dz / len],
     };
     const hit = rayHitTriangles(local, this._vertices, this._faces, {
       clippingPlanes: this._clippingPlanes,
-      maxDistance,
+      maxDistance: maxDistance * len,
     });
     if (!hit) return null;
+    hit.distance /= len;
     hit.point = [hit.point[0] * sx, hit.point[1] * sy, hit.point[2] * sz];
     return hit;
   }
@@ -377,36 +391,29 @@ export class SurfaceLayer extends Layer {
     this.changed.emit(this);
   }
 
-  /** Axis-aligned bounds + a center/radius the viewer uses to frame the orbit camera. */
+  /** Axis-aligned bounds + a center/radius the viewer uses to frame the orbit camera, as drawn
+   *  (with {@link scale3d} applied). */
   bounds(): SurfaceBounds {
-    const cached = this._bounds;
-    if (
-      cached &&
-      cached.version === this.dataVersion &&
-      cached.transform === this.transformVersion
-    ) {
-      return cloneBounds(cached.bounds);
-    }
-    const bounds = this.computeBounds();
-    this._bounds = { version: this.dataVersion, transform: this.transformVersion, bounds };
-    return cloneBounds(bounds);
-  }
-
-  private computeBounds(): SurfaceBounds {
-    const v = this.vertices;
-    if (v.length === 0) {
+    if (this.vertices.length === 0) {
       return { min: [0, 0, 0], max: [0, 0, 0], center: [0, 0, 0], radius: 1 };
     }
-    const min: [number, number, number] = [Infinity, Infinity, Infinity];
-    const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
-    const s = this._scale;
-    for (let i = 0; i < v.length; i += 3) {
-      for (let a = 0; a < 3; a++) {
-        const c = v[i + a] * s[a];
-        if (c < min[a]) min[a] = c;
-        if (c > max[a]) max[a] = c;
-      }
+    let extent = this._extent;
+    if (!extent || extent.version !== this.dataVersion) {
+      extent = { version: this.dataVersion, ...this.computeExtent() };
+      this._extent = extent;
     }
+    // Every factor is positive, so the scaled box is the scaled corners: O(1) per scale change.
+    const s = this._scale;
+    const min: [number, number, number] = [
+      extent.min[0] * s[0],
+      extent.min[1] * s[1],
+      extent.min[2] * s[2],
+    ];
+    const max: [number, number, number] = [
+      extent.max[0] * s[0],
+      extent.max[1] * s[1],
+      extent.max[2] * s[2],
+    ];
     const center: [number, number, number] = [
       (min[0] + max[0]) / 2,
       (min[1] + max[1]) / 2,
@@ -414,6 +421,21 @@ export class SurfaceLayer extends Layer {
     ];
     const radius = 0.5 * Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) || 1;
     return { min, max, center, radius };
+  }
+
+  /** The vertices' own min/max (before {@link scale3d}): one walk over the mesh. */
+  private computeExtent(): { min: [number, number, number]; max: [number, number, number] } {
+    const v = this.vertices;
+    const min: [number, number, number] = [Infinity, Infinity, Infinity];
+    const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < v.length; i += 3) {
+      for (let a = 0; a < 3; a++) {
+        const c = v[i + a];
+        if (c < min[a]) min[a] = c;
+        if (c > max[a]) max[a] = c;
+      }
+    }
+    return { min, max };
   }
 
   /** Line-list index buffer of the triangle edges, for wireframe rendering: each face (a,b,c) →
@@ -548,10 +570,6 @@ function centerVerticesInPlace(vertices: Float32Array): void {
     vertices[i + 1] -= cy;
     vertices[i + 2] -= cz;
   }
-}
-
-function cloneBounds(b: SurfaceBounds): SurfaceBounds {
-  return { min: [...b.min], max: [...b.max], center: [...b.center], radius: b.radius };
 }
 
 /** A CSS colour or RGBA (0..1) as RGBA; throws for a colour that does not parse. */
