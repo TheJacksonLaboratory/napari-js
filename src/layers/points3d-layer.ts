@@ -154,7 +154,7 @@ export class Points3DLayer extends Layer {
     this._alphas = checkLength(opts.alphas, n, 'alphas');
     this._sizes = checkLength(opts.sizes, n, 'sizes');
     this._colors = checkColors(opts.colors, n);
-    this._scale = checkScale(opts.scale3d ?? [1, 1, 1]);
+    this._scale = checkScale3d(opts.scale3d ?? [1, 1, 1]);
     this._colormap = resolveColormap(opts.colormap ?? 'viridis');
     this._contrastLimits = opts.contrastLimits ?? valueRange(vals);
     this._contrastExplicit = opts.contrastLimits !== undefined;
@@ -326,7 +326,7 @@ export class Points3DLayer extends Layer {
     return [this._scale[0], this._scale[1], this._scale[2]];
   }
   set scale3d(value: readonly [number, number, number]) {
-    const next = checkScale(value);
+    const next = checkScale3d(value);
     if (next[0] === this._scale[0] && next[1] === this._scale[1] && next[2] === this._scale[2])
       return;
     this._scale = next;
@@ -413,10 +413,13 @@ export function scaledViewProjection(
 }
 
 /** A per-axis scale, copied; a factor that is not finite and positive throws. */
-function checkScale(value: readonly number[]): [number, number, number] {
+export function checkScale3d(
+  value: readonly number[],
+  what = 'Points3D',
+): [number, number, number] {
   if (value.length !== 3 || !value.every((v) => Number.isFinite(v) && v > 0)) {
     throw new Error(
-      `Points3D scale3d must be three finite positive factors, got [${value.join(', ')}].`,
+      `${what} scale3d must be three finite positive factors, got [${value.join(', ')}].`,
     );
   }
   return [value[0], value[1], value[2]];

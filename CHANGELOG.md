@@ -7,6 +7,12 @@ All notable changes to napari-js are documented here. The format roughly follows
 
 ### Added
 
+- **`SurfaceLayer.scale3d`: a per-axis scale of a mesh, applied on the GPU.** As
+  `Points3DLayer.scale3d`, the surface is drawn, bounded and picked at `vertices × scale3d` (the
+  scale is a uniform the vertex shader multiplies in; `pick` maps the ray into the vertices' frame
+  and the hit point back), so stretching a view's Z by dragging no longer rewrites and re-uploads
+  every region surface's vertices. `transformVersion` moves with it, `dataVersion` does not.
+  Clipping planes stay in the vertices' own coordinates. Default `[1, 1, 1]`: unchanged.
 - **`PointsLayer.minScreenSize`: markers never drawn smaller than a number of canvas pixels.** A
   marker's size is in data units, so zoomed out over a large slide (a Cytos plate, a Xenium
   section) every cell fell below a pixel and the field vanished. With `minScreenSize` set, the

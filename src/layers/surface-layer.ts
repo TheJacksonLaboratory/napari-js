@@ -1,3 +1,4 @@
+import { checkScale3d } from './points3d-layer';
 import { Layer, type BlendMode, type Fit3D } from './layer';
 import { Colormap, resolveColormap } from '../color/colormap';
 import { mapScalar } from '../color/display-pipeline';
@@ -37,6 +38,11 @@ export interface SurfaceLayerOptions {
   vertexColors?: Float32Array;
   /** Planes that cut the surface away (napari's `experimental_clipping_planes`). See {@link SurfaceLayer.clippingPlanes}. */
   clippingPlanes?: readonly ClippingPlane[];
+  /**
+   * Per-axis scale of the mesh, applied on the GPU: the surface is drawn, bounded and picked at
+   * `vertices[i] * scale3d`. See {@link SurfaceLayer.scale3d}.
+   */
+  scale3d?: readonly [number, number, number];
 }
 
 /** Axis-aligned bounds of a mesh, plus a center + framing radius for the 3D camera. */
@@ -81,15 +87,21 @@ export class SurfaceLayer extends Layer {
    * index buffers (the layer, its GPU visual and its place in the layer list are kept).
    */
   dataVersion = 0;
+  /**
+   * Bumped when {@link scale3d} changes. The vertices are not re-uploaded (the scale is a uniform);
+   * what caches the drawn geometry (bounds, a picker) re-reads it.
+   */
+  transformVersion = 0;
 
   private _vertices!: Float32Array;
+  private _scale: [number, number, number] = [1, 1, 1];
   private _faces!: Uint32Array;
   private _values!: Float32Array;
   private _color: RGBA | null = null;
   private _vertexColors: Float32Array | null = null;
   private _clippingPlanes: ClippingPlane[] = [];
-  /** {@link bounds}, kept until the next {@link setData}. */
-  private _bounds: { version: number; bounds: SurfaceBounds } | null = null;
+  /** {@link bounds}, kept until the next {@link setData} or {@link scale3d} change. */
+  private _bounds: { version: number; transform: number; bounds: SurfaceBounds } | null = null;
   /** Whether a per-vertex colour has alpha below 1, as of {@link colorVersion}. */
   private _vertexAlpha: { version: number; partial: boolean } | null = null;
 
@@ -107,6 +119,7 @@ export class SurfaceLayer extends Layer {
   ) {
     super({ name: opts.name });
     this.assign(vertices, faces, values);
+    if (opts.scale3d) this._scale = checkScale3d(opts.scale3d, 'Surface');
     this._colormap = resolveColormap(opts.colormap ?? 'viridis');
     this._contrastLimits = opts.contrastLimits ?? valueRange(this._values);
     this._gamma = opts.gamma ?? 1;
@@ -324,18 +337,58 @@ export class SurfaceLayer extends Layer {
     const { min, max } = this.bounds();
     const maxDistance = ray.length ?? Infinity;
     if (this.vertexCount === 0 || !(rayHitBox(ray, min, max) <= maxDistance)) return null;
-    return rayHitTriangles(ray, this._vertices, this._faces, {
+    const [sx, sy, sz] = this._scale;
+    if (sx === 1 && sy === 1 && sz === 1) {
+      return rayHitTriangles(ray, this._vertices, this._faces, {
+        clippingPlanes: this._clippingPlanes,
+        maxDistance,
+      });
+    }
+    // Into the vertices' own frame: origin and direction divided by the scale keep the ray's
+    // parameter, so a hit's distance along it is unchanged and only its point is scaled back.
+    const local: Ray = {
+      origin: [ray.origin[0] / sx, ray.origin[1] / sy, ray.origin[2] / sz],
+      dir: [ray.dir[0] / sx, ray.dir[1] / sy, ray.dir[2] / sz],
+    };
+    const hit = rayHitTriangles(local, this._vertices, this._faces, {
       clippingPlanes: this._clippingPlanes,
       maxDistance,
     });
+    if (!hit) return null;
+    hit.point = [hit.point[0] * sx, hit.point[1] * sy, hit.point[2] * sz];
+    return hit;
+  }
+
+  /**
+   * Per-axis scale of the mesh, applied on the GPU as its model matrix: drawn, bounded and picked at
+   * `vertices[i] * scale3d`, with nothing re-uploaded when it changes (so stretching a view's Z by
+   * dragging costs a uniform, however large the mesh). `[1, 1, 1]` by default. Clipping planes stay
+   * in the vertices' own coordinates. Each factor must be finite and positive; anything else throws.
+   */
+  get scale3d(): [number, number, number] {
+    return [this._scale[0], this._scale[1], this._scale[2]];
+  }
+  set scale3d(value: readonly [number, number, number]) {
+    const next = checkScale3d(value, 'Surface');
+    if (next[0] === this._scale[0] && next[1] === this._scale[1] && next[2] === this._scale[2])
+      return;
+    this._scale = next;
+    this.transformVersion++;
+    this.changed.emit(this);
   }
 
   /** Axis-aligned bounds + a center/radius the viewer uses to frame the orbit camera. */
   bounds(): SurfaceBounds {
     const cached = this._bounds;
-    if (cached && cached.version === this.dataVersion) return cloneBounds(cached.bounds);
+    if (
+      cached &&
+      cached.version === this.dataVersion &&
+      cached.transform === this.transformVersion
+    ) {
+      return cloneBounds(cached.bounds);
+    }
     const bounds = this.computeBounds();
-    this._bounds = { version: this.dataVersion, bounds };
+    this._bounds = { version: this.dataVersion, transform: this.transformVersion, bounds };
     return cloneBounds(bounds);
   }
 
@@ -346,9 +399,10 @@ export class SurfaceLayer extends Layer {
     }
     const min: [number, number, number] = [Infinity, Infinity, Infinity];
     const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+    const s = this._scale;
     for (let i = 0; i < v.length; i += 3) {
       for (let a = 0; a < 3; a++) {
-        const c = v[i + a];
+        const c = v[i + a] * s[a];
         if (c < min[a]) min[a] = c;
         if (c > max[a]) max[a] = c;
       }

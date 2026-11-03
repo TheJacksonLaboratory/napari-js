@@ -18,6 +18,7 @@ struct U {
   light : vec4<f32>,    // lightDir.xyz (world, toward viewer), ambient
   flags : vec4<f32>,    // wireframe (0/1), invert (0/1), colour mode (0 colormap, 1 color, 2 vertex), clipping planes
   color : vec4<f32>,    // the layer colour (colour mode 1), straight RGBA
+  scale : vec4<f32>,    // per-axis model scale (SurfaceLayer.scale3d).xyz, 0
   planes : array<vec4<f32>, ${2 * MAX_CLIPPING_PLANES}>, // per clipping plane: position.xyz, 0; unit normal.xyz, 0
 };
 @group(0) @binding(0) var<uniform> u : U;
@@ -33,6 +34,8 @@ struct VSOut {
   @location(0) worldPos : vec3<f32>,
   @location(1) value : f32,
   @location(2) color : vec4<f32>,
+  // The vertex as given, before the model scale: what the clipping planes are in.
+  @location(3) vertexPos : vec3<f32>,
 };
 
 // vcolor comes from a second buffer: per vertex (colour mode 2), else one dummy element read by
@@ -40,8 +43,10 @@ struct VSOut {
 @vertex
 fn vs(@location(0) pos : vec3<f32>, @location(1) value : f32, @location(2) vcolor : vec4<f32>) -> VSOut {
   var out : VSOut;
-  out.position = u.mvp * vec4<f32>(pos, 1.0);
-  out.worldPos = pos;
+  let world = pos * u.scale.xyz;
+  out.position = u.mvp * vec4<f32>(world, 1.0);
+  out.worldPos = world;
+  out.vertexPos = pos;
   out.value = value;
   out.color = vcolor;
   return out;
@@ -80,7 +85,7 @@ fn fragmentAlpha(in : VSOut) -> f32 {
 // fully transparent: a transparent part must not hide the mesh behind it).
 @fragment
 fn fsDepth(in : VSOut) {
-  if (clippedAway(in.worldPos) || fragmentAlpha(in) <= 0.0) {
+  if (clippedAway(in.vertexPos) || fragmentAlpha(in) <= 0.0) {
     discard;
   }
 }
@@ -122,7 +127,7 @@ fn shadeSurface(in : VSOut) -> vec4<f32> {
 
   // Clipping planes (vertex coordinates): kept where dot(p - position, normal) >= 0 for every one.
   // Tested last, so the derivatives and the LUT sample above stay in uniform control flow.
-  if (clippedAway(in.worldPos)) {
+  if (clippedAway(in.vertexPos)) {
     discard;
   }
 
