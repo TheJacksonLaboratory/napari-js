@@ -5,7 +5,26 @@ All notable changes to napari-js are documented here. The format roughly follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Filled shapes that are not star-convex are ear-clipped, not fanned.** `ringsToFan` fanned a
+  ring with no point that sees all of it (a spread cell traced around its mask, a lobed region)
+  from its vertex mean, so the fan overlapped itself and spilled out of the ring: at a translucent
+  fill, streaks across the neighbouring cells (86% of a Cytos HeLa well's cells). Such a ring is now
+  triangulated by ear clipping (`earClipRing`, exported): n − 2 triangles inside it, padded with
+  two empty ones so a ring still takes 3n vertices. A ring that crosses itself is still drawn.
+  Star-convex rings keep their fan.
+
 ### Added
+
+- **`Points3DLayer.scale3d`** (option + setter): a per-axis scale of the positions about the world
+  origin, applied on the GPU as the points' model matrix. It is for stretching a cloud live, such
+  as a thin tissue section's z, which at its true proportions is a flat sheet. Changing it re-uploads
+  nothing, where rewriting `positions` would re-upload the whole cloud on every pointer move. A
+  volume centred on the origin stretches the same way through its `voxelSize`, so the two stay
+  aligned. `bounds()` and `PointPicker` follow it: a `transformVersion` clock makes the picker
+  re-project. `scaledViewProjection(vp, scale)` is the matrix the points are drawn and picked with.
+  (Not `Layer.scale`, the 2D layers' data → world scale.)
 
 - **`'translucent_no_depth'` blending** (napari's), and blendings without depth in 3D. Only
   `'opaque'` and `'translucent'` take part in depth, as napari's (vispy's) presets:

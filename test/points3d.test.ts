@@ -3,11 +3,12 @@ import {
   Points3DLayer,
   POINTS3D_DATA_FLOATS,
   POINTS3D_STYLE_FLOATS,
+  scaledViewProjection,
 } from '../src/layers/points3d-layer';
 import { packPoints3DUniforms, POINTS3D_UNIFORM_FLOATS } from '../src/visuals/points3d-visual';
 import { mapScalar } from '../src/color/display-pipeline';
 import { resolveColormap } from '../src/color/colormap';
-import { identity } from '../src/math/mat4';
+import { identity, perspective } from '../src/math/mat4';
 
 const POS = new Float32Array([0, 0, 0, 2, 0, 0, 2, 4, 6]);
 const VALS = new Float32Array([10, 20, 30]);
@@ -317,6 +318,74 @@ describe('Points3DLayer', () => {
       p.colors = COLORS;
       packPoints3DUniforms(out, p, identity(), 640, 480);
       expect(out[24]).toBe(1);
+    });
+  });
+
+  describe('scale3d', () => {
+    it('defaults to the identity and takes it as an option', () => {
+      expect(new Points3DLayer(POS, VALS).scale3d).toEqual([1, 1, 1]);
+      expect(new Points3DLayer(POS, VALS, { scale3d: [1, 1, 4] }).scale3d).toEqual([1, 1, 4]);
+    });
+
+    it('rejects a factor that is not finite and positive', () => {
+      for (const bad of [
+        [1, 1, 0],
+        [1, -1, 1],
+        [1, 1, NaN],
+        [Infinity, 1, 1],
+      ] as [number, number, number][]) {
+        expect(() => new Points3DLayer(POS, VALS, { scale3d: bad })).toThrow(/scale3d/);
+        const p = new Points3DLayer(POS, VALS);
+        expect(() => (p.scale3d = bad)).toThrow(/scale3d/);
+        expect(p.scale3d).toEqual([1, 1, 1]);
+      }
+    });
+
+    it('moves the transform clock, not the data or style clocks, and emits once per change', () => {
+      const p = new Points3DLayer(POS, VALS);
+      let n = 0;
+      p.changed.connect(() => n++);
+      const { dataVersion, styleVersion } = p;
+      p.scale3d = [1, 1, 3];
+      expect(p.transformVersion).toBe(1);
+      expect([p.dataVersion, p.styleVersion]).toEqual([dataVersion, styleVersion]);
+      expect(n).toBe(1);
+      p.scale3d = [1, 1, 3]; // the same scale: nothing to redraw
+      expect(p.transformVersion).toBe(1);
+      expect(n).toBe(1);
+    });
+
+    it('scales the bounds the camera frames, and leaves the positions alone', () => {
+      const p = new Points3DLayer(POS, VALS, { scale3d: [1, 2, 10] });
+      const b = p.bounds();
+      expect(b.min).toEqual([0, 0, 0]);
+      expect(b.max).toEqual([2, 8, 60]);
+      expect(b.center).toEqual([1, 4, 30]);
+      expect(Array.from(p.positions)).toEqual(Array.from(POS));
+      expect(Array.from(p.buildInstanceData().subarray(8, 12))).toEqual([2, 4, 6, 30]);
+    });
+
+    it('draws with the view-projection after the scale', () => {
+      const vp = perspective(1, 4 / 3, 0.1, 100);
+      vp[14] -= 5; // something with a translation, so the order matters
+      const out = new Float32Array(POINTS3D_UNIFORM_FLOATS);
+      const p = new Points3DLayer(POS, VALS);
+      packPoints3DUniforms(out, p, vp, 640, 480);
+      expect(Array.from(out.subarray(0, 16))).toEqual(Array.from(vp));
+
+      p.scale3d = [1, 1, 5];
+      packPoints3DUniforms(out, p, vp, 640, 480);
+      // vp * diag(1, 1, 5, 1): only the z column scales.
+      for (let c = 0; c < 4; c++) {
+        for (let r = 0; r < 4; r++) {
+          expect(out[c * 4 + r]).toBeCloseTo(vp[c * 4 + r] * (c === 2 ? 5 : 1), 6);
+        }
+      }
+    });
+
+    it('returns the same matrix for the identity scale', () => {
+      const vp = perspective(1, 1, 0.1, 100);
+      expect(scaledViewProjection(vp, [1, 1, 1])).toBe(vp);
     });
   });
 });

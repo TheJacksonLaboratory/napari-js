@@ -77,13 +77,14 @@ export type {
   HeightFieldOptions,
   SurfaceColorMode,
 } from './layers/surface-layer';
-export { Points3DLayer } from './layers/points3d-layer';
+export { Points3DLayer, scaledViewProjection } from './layers/points3d-layer';
 export type { Points3DLayerOptions } from './layers/points3d-layer';
 export {
   ShapesLayer,
   polygonKernelPoint,
   ringsToOutline,
   ringsToFan,
+  earClipRing,
   shapeVertexCount,
 } from './layers/shapes-layer';
 export type { ShapesLayerOptions, ShapeDraw, ShapeGeometry } from './layers/shapes-layer';

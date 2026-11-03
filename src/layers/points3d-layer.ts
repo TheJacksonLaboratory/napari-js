@@ -3,6 +3,7 @@ import { Colormap, resolveColormap } from '../color/colormap';
 import { mapScalar, clamp01 } from '../color/display-pipeline';
 import type { SurfaceBounds } from './surface-layer';
 import type { RGBA } from './points-layer';
+import { multiply, scale3d } from '../math/mat4';
 
 export interface Points3DLayerOptions {
   /** Whether adding this layer frames the orbit camera; overrides the viewer's default. */
@@ -45,6 +46,11 @@ export interface Points3DLayerOptions {
    * order into the colour. See {@link Points3DLayer.colorAt} for the exact combination.
    */
   colors?: Float32Array;
+  /**
+   * Per-axis scale of the positions, about the world origin (default `[1, 1, 1]`). See
+   * {@link Points3DLayer.scale3d}.
+   */
+  scale3d?: readonly [number, number, number];
 }
 
 /**
@@ -116,6 +122,14 @@ export class Points3DLayer extends Layer {
   private _sizes: Float32Array | null;
   private _colors: Float32Array | null;
 
+  private _scale: [number, number, number];
+
+  /**
+   * Bumped when {@link scale3d} changes. The positions are not re-uploaded (the scale is a
+   * uniform), but what they project to has moved, so a {@link PointPicker} re-projects.
+   */
+  transformVersion = 0;
+
   private _colormap: Colormap;
   private _contrastLimits: [number, number];
   /** Whether the caller pinned the window, or it was derived from the values. */
@@ -140,6 +154,7 @@ export class Points3DLayer extends Layer {
     this._alphas = checkLength(opts.alphas, n, 'alphas');
     this._sizes = checkLength(opts.sizes, n, 'sizes');
     this._colors = checkColors(opts.colors, n);
+    this._scale = checkScale(opts.scale3d ?? [1, 1, 1]);
     this._colormap = resolveColormap(opts.colormap ?? 'viridis');
     this._contrastLimits = opts.contrastLimits ?? valueRange(vals);
     this._contrastExplicit = opts.contrastLimits !== undefined;
@@ -294,7 +309,33 @@ export class Points3DLayer extends Layer {
     this.changed.emit(this);
   }
 
-  /** Axis-aligned bounds + a center/radius the viewer uses to frame the orbit camera. */
+  /**
+   * Per-axis scale of the positions, about the world origin: point `i` is drawn (and picked) at
+   * `positions[i] * scale3d`. `[1, 1, 1]` by default.
+   *
+   * For stretching a cloud live — a thin tissue section's z, say, which at its true proportions is
+   * a flat sheet. The positions stay as they are: the scale is applied on the GPU, so changing it
+   * on every pointer move of a drag re-uploads nothing, where rewriting `positions` would re-upload
+   * the whole cloud each time. A volume beside it stretches the same way through its `voxelSize`,
+   * so the two stay aligned when both are centred on the origin.
+   *
+   * Each factor must be finite and positive; anything else throws. (Not {@link Layer.scale}: that
+   * is a 2D layer's data → world scale, which a 3D layer does not use.)
+   */
+  get scale3d(): [number, number, number] {
+    return [this._scale[0], this._scale[1], this._scale[2]];
+  }
+  set scale3d(value: readonly [number, number, number]) {
+    const next = checkScale(value);
+    if (next[0] === this._scale[0] && next[1] === this._scale[1] && next[2] === this._scale[2])
+      return;
+    this._scale = next;
+    this.transformVersion++;
+    this.changed.emit(this);
+  }
+
+  /** Axis-aligned bounds + a center/radius the viewer uses to frame the orbit camera, as drawn
+   *  (with {@link scale3d} applied). */
   bounds(): SurfaceBounds {
     const p = this.positions;
     if (p.length === 0) {
@@ -302,9 +343,10 @@ export class Points3DLayer extends Layer {
     }
     const min: [number, number, number] = [Infinity, Infinity, Infinity];
     const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+    const k = this._scale;
     for (let i = 0; i < p.length; i += 3) {
       for (let a = 0; a < 3; a++) {
-        const c = p[i + a];
+        const c = p[i + a] * k[a];
         if (c < min[a]) min[a] = c;
         if (c > max[a]) max[a] = c;
       }
@@ -353,6 +395,31 @@ export class Points3DLayer extends Layer {
     }
     return out;
   }
+}
+
+/**
+ * The view-projection a layer's positions are drawn (and picked) with: `viewProjection` after
+ * its per-axis {@link Points3DLayer.scale3d}, which is the model matrix. The same matrix when the
+ * scale is the identity.
+ */
+export function scaledViewProjection(
+  viewProjection: ArrayLike<number>,
+  scale: readonly [number, number, number],
+): Float32Array {
+  const vp =
+    viewProjection instanceof Float32Array ? viewProjection : Float32Array.from(viewProjection);
+  if (scale[0] === 1 && scale[1] === 1 && scale[2] === 1) return vp;
+  return multiply(vp, scale3d(scale[0], scale[1], scale[2]));
+}
+
+/** A per-axis scale, copied; a factor that is not finite and positive throws. */
+function checkScale(value: readonly number[]): [number, number, number] {
+  if (value.length !== 3 || !value.every((v) => Number.isFinite(v) && v > 0)) {
+    throw new Error(
+      `Points3D scale3d must be three finite positive factors, got [${value.join(', ')}].`,
+    );
+  }
+  return [value[0], value[1], value[2]];
 }
 
 /** Validate a per-point array's length, so a mismatch surfaces here and not as a render. */
