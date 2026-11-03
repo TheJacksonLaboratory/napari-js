@@ -173,6 +173,28 @@ describe('PointPicker', () => {
     expect(picker.pick(-500, -500, 4)).toBe(-1);
   });
 
+  it('picks the points where their scale3d draws them, and re-projects when it changes', () => {
+    const { viewer, layer, picker } = setup();
+    // The last point is the only one off z = 0: stretching z moves it on screen.
+    const before = viewer.projectPoints(layer.positions)!;
+    const [x0, y0] = [before.screen[6], before.screen[7]];
+    expect(picker.pick(x0, y0, 2)).toBe(3);
+
+    layer.scale3d = [1, 1, 8];
+    const stretched = new Float32Array(layer.positions);
+    for (let i = 2; i < stretched.length; i += 3) stretched[i] *= 8;
+    const after = viewer.projectPoints(stretched)!;
+    const [x1, y1] = [after.screen[6], after.screen[7]];
+    expect(Math.hypot(x1 - x0, y1 - y0)).toBeGreaterThan(4);
+    expect(picker.pick(x1, y1, 2)).toBe(3);
+    expect(picker.pick(x0, y0, 2)).toBe(-1);
+    // The points on z = 0 have not moved.
+    expect(picker.pick(after.screen[0], after.screen[1], 2)).toBe(0);
+    const projected = picker.projected()!;
+    expect(projected.screen[6]).toBeCloseTo(x1, 3);
+    expect(projected.screen[7]).toBeCloseTo(y1, 3);
+  });
+
   it('projects lazily, reuses its buffers, and re-projects after the camera moves', () => {
     const { viewer, layer, picker } = setup();
     const spy = vi.spyOn(viewer, 'projectPoints');

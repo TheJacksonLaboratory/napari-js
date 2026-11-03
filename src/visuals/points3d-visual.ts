@@ -3,6 +3,7 @@ import {
   POINTS3D_DATA_FLOATS,
   POINTS3D_STYLE_FLOATS,
   POINTS3D_COLOR_FLOATS,
+  scaledViewProjection,
 } from '../layers/points3d-layer';
 import type { Mat4 } from '../math/mat4';
 import { blendingUsesDepth, type BlendMode } from '../layers/layer';
@@ -31,7 +32,7 @@ export function packPoints3DUniforms(
   vw: number,
   vh: number,
 ): void {
-  out.set(viewProjection, 0);
+  out.set(scaledViewProjection(viewProjection, layer.scale3d), 0);
   out[16] = vw;
   out[17] = vh;
   out[18] = layer.size;
