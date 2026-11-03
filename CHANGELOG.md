@@ -7,6 +7,15 @@ All notable changes to napari-js are documented here. The format roughly follows
 
 ### Added
 
+- **`Points3DLayer.scale3d`** (option + setter): a per-axis scale of the positions about the world
+  origin, applied on the GPU as the points' model matrix. It is for stretching a cloud live, such
+  as a thin tissue section's z, which at its true proportions is a flat sheet. Changing it re-uploads
+  nothing, where rewriting `positions` would re-upload the whole cloud on every pointer move. A
+  volume centred on the origin stretches the same way through its `voxelSize`, so the two stay
+  aligned. `bounds()` and `PointPicker` follow it: a `transformVersion` clock makes the picker
+  re-project. `scaledViewProjection(vp, scale)` is the matrix the points are drawn and picked with.
+  (Not `Layer.scale`, the 2D layers' data → world scale.)
+
 - **`'translucent_no_depth'` blending** (napari's), and blendings without depth in 3D. Only
   `'opaque'` and `'translucent'` take part in depth, as napari's (vispy's) presets:
   `'translucent_no_depth'` blends as `'translucent'`, and it, `'additive'` and `'minimum'` are

@@ -1,7 +1,7 @@
 import type { Camera3D } from '../camera/camera3d';
-import type { Points3DLayer } from '../layers/points3d-layer';
+import { scaledViewProjection, type Points3DLayer } from '../layers/points3d-layer';
 import type { ProjectedPickOptions } from './pick';
-import type { ProjectedPoints } from './project';
+import { projectPoints, type ProjectedPoints } from './project';
 import { ScreenIndex, pickLinear, SCREEN_INDEX_MIN_POINTS } from './screen-index';
 
 /** What a {@link PointPicker} needs from a viewer — `Viewer` and `HeadlessViewer` provide it. */
@@ -38,7 +38,8 @@ export interface PointPickerOptions {
  * nothing — and build the screen index in the same lazy slot once the cloud is large enough
  * for it to pay off.
  *
- * Invalidated by `camera3d.changed`, by `layer.dataVersion`, and by a canvas resize.
+ * Invalidated by `camera3d.changed`, by `layer.dataVersion` and `layer.transformVersion` (its
+ * `scale3d`), and by a canvas resize.
  * Styling (`alphas`, `sizes`, `colors`) does not move the projection.
  *
  * Unless a pick's options say otherwise, it follows what the layer draws: a point with
@@ -50,6 +51,7 @@ export class PointPicker {
   private index: ScreenIndex | null = null;
   private stale = true;
   private projectedVersion = -1;
+  private projectedTransform = -1;
   private projectedW = 0;
   private projectedH = 0;
   private projectedOk = false;
@@ -111,6 +113,7 @@ export class PointPicker {
     if (
       !this.stale &&
       this.projectedVersion === this.layer.dataVersion &&
+      this.projectedTransform === this.layer.transformVersion &&
       this.projectedW === w &&
       this.projectedH === h
     ) {
@@ -118,11 +121,12 @@ export class PointPicker {
     }
     this.stale = false;
     this.projectedVersion = this.layer.dataVersion;
+    this.projectedTransform = this.layer.transformVersion;
     this.projectedW = w;
     this.projectedH = h;
     this.index = null;
     // Reuses the previous buffers when the point count is unchanged.
-    const projected = this.host.projectPoints(this.layer.positions, this.projection);
+    const projected = this.project(w, h);
     this.projectedOk = projected !== null;
     if (!projected) return false;
     this.projection = projected;
@@ -134,6 +138,17 @@ export class PointPicker {
       });
     }
     return true;
+  }
+
+  /** The layer's points on the canvas, as drawn: under its {@link Points3DLayer.scale3d}. */
+  private project(w: number, h: number): ProjectedPoints | null {
+    const scale = this.layer.scale3d;
+    if (scale[0] === 1 && scale[1] === 1 && scale[2] === 1) {
+      return this.host.projectPoints(this.layer.positions, this.projection);
+    }
+    if (!w || !h) return null;
+    const mvp = scaledViewProjection(this.host.camera3d.viewProjection(w, h), scale);
+    return projectPoints(mvp, this.layer.positions, w, h, this.projection);
   }
 
   /** Default `radiusAt` / `pickable` from the layer's per-point style, unless given. */
