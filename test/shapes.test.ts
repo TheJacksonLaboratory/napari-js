@@ -297,7 +297,8 @@ describe('fan apex', () => {
   it('ear-clips a staircase traced around a mask, the shape of a spread cell', () => {
     // An "S" of blocks: stair steps on both sides, reflex corners everywhere.
     fillsExactly([
-      0, 0, 4, 0, 4, 2, 6, 2, 6, 4, 8, 4, 8, 10, 4, 10, 4, 8, 2, 8, 2, 6, 6, 6, 6, 5, 3, 5, 3, 4, 0, 4,
+      0, 0, 4, 0, 4, 2, 6, 2, 6, 4, 8, 4, 8, 10, 4, 10, 4, 8, 2, 8, 2, 6, 6, 6, 6, 5, 3, 5, 3, 4, 0,
+      4,
     ]);
   });
 
