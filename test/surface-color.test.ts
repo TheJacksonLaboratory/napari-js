@@ -140,12 +140,14 @@ describe('SurfaceLayer clipping planes', () => {
     const out = new Float32Array(SURFACE_UNIFORM_FLOATS);
     packSurfaceUniforms(out, s, new Camera3D(), 100, 100);
     expect(out[27]).toBe(2); // the enabled ones
-    expect(Array.from(out.subarray(32, 40))).toEqual([0, 0, 0, 0, 1, 0, 0, 0]);
-    expect(Array.from(out.subarray(40, 48))).toEqual([0, 4, 0, 0, 0, -1, 0, 0]);
+    // After the colour, the model scale (identity), then the planes.
+    expect(Array.from(out.subarray(32, 36))).toEqual([1, 1, 1, 0]);
+    expect(Array.from(out.subarray(36, 44))).toEqual([0, 0, 0, 0, 1, 0, 0, 0]);
+    expect(Array.from(out.subarray(44, 52))).toEqual([0, 4, 0, 0, 0, -1, 0, 0]);
     s.clippingPlanes = [];
     packSurfaceUniforms(out, s, new Camera3D(), 100, 100);
     expect(out[27]).toBe(0);
-    expect(out.subarray(32).every((v) => v === 0)).toBe(true);
+    expect(out.subarray(36).every((v) => v === 0)).toBe(true);
     expect(uniformStructFloats(SURFACE_SHADER)).toBe(SURFACE_UNIFORM_FLOATS);
   });
 });

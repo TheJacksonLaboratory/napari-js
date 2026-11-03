@@ -9,7 +9,7 @@
 export const POINTS_SHADER = /* wgsl */ `
 struct U {
   mvp : mat4x4<f32>,
-  params : vec4<f32>,   // layer symbol code (POINT_SYMBOLS index), opacity, borderWidth, 0
+  params : vec4<f32>,   // layer symbol code (POINT_SYMBOLS index), opacity, borderWidth, min diameter
 };
 @group(0) @binding(0) var<uniform> u : U;
 
@@ -36,13 +36,15 @@ fn vs(
     vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
   );
   let c = corners[vi];
-  let world = pos + c * (size * 0.5);
+  // Never drawn smaller than the layer's floor (minScreenSize at this zoom, in data units).
+  let drawn = max(size, u.params.w);
+  let world = pos + c * (drawn * 0.5);
   var out : VSOut;
   out.position = u.mvp * vec4<f32>(world, 0.0, 1.0);
   out.local = c;
   out.face = face;
   out.border = border;
-  out.borderFrac = clamp(u.params.z / max(size, 1e-6), 0.0, 1.0);
+  out.borderFrac = clamp(u.params.z / max(drawn, 1e-6), 0.0, 1.0);
   out.symbol = select(symbol, u.params.x, symbol < 0.0);
   return out;
 }

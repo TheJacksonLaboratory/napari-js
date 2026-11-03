@@ -49,6 +49,13 @@ export interface PointsLayerOptions {
    * Length must equal the point count; an unknown code throws.
    */
   symbols?: Uint8Array | null;
+  /**
+   * Smallest drawn diameter, in canvas (CSS) pixels: a marker whose data size is smaller than
+   * this at the camera's zoom is drawn this size, so a dense field zoomed out stays visible
+   * instead of falling below a pixel and vanishing. Default 0: markers are drawn at their data
+   * size at every zoom.
+   */
+  minScreenSize?: number;
   opacity?: number;
   blending?: BlendMode;
   visible?: boolean;
@@ -77,6 +84,12 @@ export interface PointsPickOptions {
   /** False for a point the host does not draw or does not want picked. */
   pickable?: (i: number) => boolean;
   /**
+   * Canvas pixels per world unit (the 2D camera's `zoom`) the layer is drawn at. With it, a marker
+   * is hit (and searched for) at the size it is drawn, {@link PointsLayer.minScreenSize}'s floor
+   * included; without it, at its data size. Ignored for a point `radiusAt` sizes.
+   */
+  zoom?: number;
+  /**
    * Which of several hit points wins:
    *  - `'topmost'` (default, napari's `get_value`): the last drawn — highest index — whatever
    *    its distance, because that is the marker on top, the one the user sees.
@@ -86,6 +99,13 @@ export interface PointsPickOptions {
 }
 
 const STRIDE = 12; // x, y, size, fr,fg,fb,fa, br,bg,bb,ba, symbol (code, or -1 = layer symbol)
+
+function checkMinScreenSize(value: number): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`minScreenSize must be a finite number >= 0, got ${value}`);
+  }
+  return value;
+}
 
 function normalizePositions(positions: Float32Array | number[][]): Float32Array {
   if (positions instanceof Float32Array) return positions;
@@ -116,6 +136,7 @@ export class PointsLayer extends Layer {
   private _borderWidth: number;
   private _symbol: PointSymbol;
   private _symbols: Uint8Array | null;
+  private _minScreenSize: number;
   /** Lazily built pick index, and what it was built from. */
   private _pickIndex: {
     grid: GridIndex;
@@ -134,6 +155,7 @@ export class PointsLayer extends Layer {
     this._borderWidth = opts.borderWidth ?? 0;
     this._symbol = resolvePointSymbol(opts.symbol ?? 'disc');
     this._symbols = opts.symbols ? checkPointSymbols(opts.symbols, this.count) : null;
+    this._minScreenSize = checkMinScreenSize(opts.minScreenSize ?? 0);
     if (opts.opacity !== undefined) this._opacity = opts.opacity;
     if (opts.blending !== undefined) this._blending = opts.blending;
     if (opts.visible !== undefined) this._visible = opts.visible;
@@ -197,6 +219,29 @@ export class PointsLayer extends Layer {
     this.changed.emit(this);
   }
 
+  /**
+   * Smallest drawn diameter in canvas pixels (see {@link PointsLayerOptions.minScreenSize}). A
+   * uniform: changing it does not rebuild the instances.
+   */
+  get minScreenSize(): number {
+    return this._minScreenSize;
+  }
+  set minScreenSize(value: number) {
+    this._minScreenSize = checkMinScreenSize(value);
+    this.changed.emit(this);
+  }
+
+  /**
+   * The smallest diameter drawn at camera `zoom` (canvas pixels per world unit), in DATA units:
+   * {@link minScreenSize} through the layer's scale, 0 when there is no floor. With an
+   * anisotropic scale the smaller axis decides, so the marker reaches the floor on both.
+   */
+  minSizeAt(zoom: number): number {
+    if (!(this._minScreenSize > 0) || !(zoom > 0)) return 0;
+    const k = Math.min(Math.abs(this.scale[0]), Math.abs(this.scale[1]));
+    return k > 0 ? this._minScreenSize / (zoom * k) : 0;
+  }
+
   /** The layer symbol's code: its index in {@link POINT_SYMBOLS} (disc 0, ring 1, square 2, …). */
   symbolCode(): number {
     return pointSymbolCode(this._symbol);
@@ -235,7 +280,9 @@ export class PointsLayer extends Layer {
     const qx = (worldX - tx) / sx;
     const qy = (worldY - ty) / sy;
     const index = this.pickIndex();
-    const maxRadius = opts.maxRadius ?? (index.maxSize / 2) * k;
+    // The drawn floor at this zoom (data units): a marker is hit at the size it is drawn.
+    const floor = opts.zoom !== undefined ? this.minSizeAt(opts.zoom) : 0;
+    const maxRadius = opts.maxRadius ?? (Math.max(index.maxSize, floor) / 2) * k;
     const reach = Math.max(tolerance, maxRadius) / k; // in data units
     const pos = this.positions;
     const topmost = tieBreak === 'topmost';
@@ -245,7 +292,10 @@ export class PointsLayer extends Layer {
       const dx = (pos[i * 2] - qx) * k;
       const dy = (pos[i * 2 + 1] - qy) * k;
       const d2 = dx * dx + dy * dy;
-      const r = Math.max(radiusAt ? radiusAt(i) : (this.sizeAt(i) / 2) * k, tolerance);
+      const r = Math.max(
+        radiusAt ? radiusAt(i) : (Math.max(this.sizeAt(i), floor) / 2) * k,
+        tolerance,
+      );
       if (!(d2 <= r * r)) return;
       if (pickable && !pickable(i)) return;
       // Candidates do not arrive in index order, so both rules compare indices explicitly.

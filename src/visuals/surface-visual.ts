@@ -14,8 +14,8 @@ import type { Camera3D } from '../camera/camera3d';
 import { MAX_CLIPPING_PLANES } from '../layers/clipping';
 
 const VERTEX_STRIDE = SURFACE_VERTEX_FLOATS * 4; // [x,y,z,value] → 16 bytes
-/** mat4(16) + params vec4 + light vec4 + flags vec4 + color vec4 + 2 vec4 per clipping plane. */
-export const SURFACE_UNIFORM_FLOATS = 32 + 8 * MAX_CLIPPING_PLANES;
+/** mat4(16) + params vec4 + light vec4 + flags vec4 + color vec4 + scale vec4 + 2 vec4 per clipping plane. */
+export const SURFACE_UNIFORM_FLOATS = 36 + 8 * MAX_CLIPPING_PLANES;
 /** Per-vertex colour: RGBA float32 → 16 bytes (stride 0 when the layer has none). */
 const COLOR_STRIDE = 16;
 const COLOR_MODE = { colormap: 0, color: 1, vertex: 2 } as const;
@@ -63,9 +63,14 @@ export function packSurfaceUniforms(
   out[29] = color[1];
   out[30] = color[2];
   out[31] = color[3];
-  out.fill(0, 32, SURFACE_UNIFORM_FLOATS);
+  const [sx, sy, sz] = layer.scale3d;
+  out[32] = sx;
+  out[33] = sy;
+  out[34] = sz;
+  out[35] = 0;
+  out.fill(0, 36, SURFACE_UNIFORM_FLOATS);
   planes.forEach((p, i) => {
-    const o = 32 + 8 * i;
+    const o = 36 + 8 * i;
     out.set(p.position, o);
     out.set(p.normal, o + 4);
   });

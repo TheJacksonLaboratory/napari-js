@@ -1,3 +1,4 @@
+import { checkScale3d } from './points3d-layer';
 import { Layer, type BlendMode, type Fit3D } from './layer';
 import { Colormap, resolveColormap } from '../color/colormap';
 import { mapScalar } from '../color/display-pipeline';
@@ -37,6 +38,11 @@ export interface SurfaceLayerOptions {
   vertexColors?: Float32Array;
   /** Planes that cut the surface away (napari's `experimental_clipping_planes`). See {@link SurfaceLayer.clippingPlanes}. */
   clippingPlanes?: readonly ClippingPlane[];
+  /**
+   * Per-axis scale of the mesh, applied on the GPU: the surface is drawn, bounded and picked at
+   * `vertices[i] * scale3d`. See {@link SurfaceLayer.scale3d}.
+   */
+  scale3d?: readonly [number, number, number];
 }
 
 /** Axis-aligned bounds of a mesh, plus a center + framing radius for the 3D camera. */
@@ -81,15 +87,26 @@ export class SurfaceLayer extends Layer {
    * index buffers (the layer, its GPU visual and its place in the layer list are kept).
    */
   dataVersion = 0;
+  /**
+   * Bumped when {@link scale3d} changes. The vertices are not re-uploaded (the scale is a uniform);
+   * what caches the drawn geometry (bounds, a picker) re-reads it.
+   */
+  transformVersion = 0;
 
   private _vertices!: Float32Array;
+  private _scale: [number, number, number] = [1, 1, 1];
   private _faces!: Uint32Array;
   private _values!: Float32Array;
   private _color: RGBA | null = null;
   private _vertexColors: Float32Array | null = null;
   private _clippingPlanes: ClippingPlane[] = [];
-  /** {@link bounds}, kept until the next {@link setData}. */
-  private _bounds: { version: number; bounds: SurfaceBounds } | null = null;
+  /** The vertices' own min/max (before {@link scale3d}), kept until the next {@link setData}: a
+   *  scale change re-bounds the surface from them, without walking the mesh again. */
+  private _extent: {
+    version: number;
+    min: [number, number, number];
+    max: [number, number, number];
+  } | null = null;
   /** Whether a per-vertex colour has alpha below 1, as of {@link colorVersion}. */
   private _vertexAlpha: { version: number; partial: boolean } | null = null;
 
@@ -107,6 +124,7 @@ export class SurfaceLayer extends Layer {
   ) {
     super({ name: opts.name });
     this.assign(vertices, faces, values);
+    if (opts.scale3d) this._scale = checkScale3d(opts.scale3d, 'Surface');
     this._colormap = resolveColormap(opts.colormap ?? 'viridis');
     this._contrastLimits = opts.contrastLimits ?? valueRange(this._values);
     this._gamma = opts.gamma ?? 1;
@@ -314,8 +332,10 @@ export class SurfaceLayer extends Layer {
   }
 
   /**
-   * The nearest triangle `ray` hits (world coordinates, the mesh's own: a surface is drawn
-   * untransformed), either side, skipping what the {@link clippingPlanes} cut away; or null. Ignores
+   * The nearest triangle `ray` hits (world coordinates: the mesh as drawn, its vertices times
+   * {@link scale3d}; a unit direction), either side, skipping what the {@link clippingPlanes} (in the
+   * vertices' own coordinates) cut away; or null. The hit's distance is along `ray`, its point in
+   * world coordinates. Ignores
    * {@link visible} — see {@link ViewerBase.pickSurface} for picking what is on screen. Hits beyond
    * the ray's {@link Ray.length} (a {@link screenRay}'s far plane) do not count. A bounding-box test
    * first, so a miss costs nothing per triangle.
@@ -324,26 +344,88 @@ export class SurfaceLayer extends Layer {
     const { min, max } = this.bounds();
     const maxDistance = ray.length ?? Infinity;
     if (this.vertexCount === 0 || !(rayHitBox(ray, min, max) <= maxDistance)) return null;
-    return rayHitTriangles(ray, this._vertices, this._faces, {
+    const [sx, sy, sz] = this._scale;
+    if (sx === 1 && sy === 1 && sz === 1) {
+      return rayHitTriangles(ray, this._vertices, this._faces, {
+        clippingPlanes: this._clippingPlanes,
+        maxDistance,
+      });
+    }
+    // Into the vertices' own frame (where the clipping planes are): the origin divided by the scale,
+    // the direction too and then made unit again, as the intersection's tolerance expects. A world
+    // distance t along the (unit) ray is `t * len` along the local one; the hit comes back as world.
+    const dx = ray.dir[0] / sx;
+    const dy = ray.dir[1] / sy;
+    const dz = ray.dir[2] / sz;
+    const len = Math.hypot(dx, dy, dz);
+    if (!(len > 0) || !Number.isFinite(len)) return null;
+    const local: Ray = {
+      origin: [ray.origin[0] / sx, ray.origin[1] / sy, ray.origin[2] / sz],
+      dir: [dx / len, dy / len, dz / len],
+    };
+    const hit = rayHitTriangles(local, this._vertices, this._faces, {
       clippingPlanes: this._clippingPlanes,
-      maxDistance,
+      maxDistance: maxDistance * len,
     });
+    if (!hit) return null;
+    hit.distance /= len;
+    hit.point = [hit.point[0] * sx, hit.point[1] * sy, hit.point[2] * sz];
+    return hit;
   }
 
-  /** Axis-aligned bounds + a center/radius the viewer uses to frame the orbit camera. */
+  /**
+   * Per-axis scale of the mesh, applied on the GPU as its model matrix: drawn, bounded and picked at
+   * `vertices[i] * scale3d`, with nothing re-uploaded when it changes (so stretching a view's Z by
+   * dragging costs a uniform, however large the mesh). `[1, 1, 1]` by default. Clipping planes stay
+   * in the vertices' own coordinates. Each factor must be finite and positive; anything else throws.
+   */
+  get scale3d(): [number, number, number] {
+    return [this._scale[0], this._scale[1], this._scale[2]];
+  }
+  set scale3d(value: readonly [number, number, number]) {
+    const next = checkScale3d(value, 'Surface');
+    if (next[0] === this._scale[0] && next[1] === this._scale[1] && next[2] === this._scale[2])
+      return;
+    this._scale = next;
+    this.transformVersion++;
+    this.changed.emit(this);
+  }
+
+  /** Axis-aligned bounds + a center/radius the viewer uses to frame the orbit camera, as drawn
+   *  (with {@link scale3d} applied). */
   bounds(): SurfaceBounds {
-    const cached = this._bounds;
-    if (cached && cached.version === this.dataVersion) return cloneBounds(cached.bounds);
-    const bounds = this.computeBounds();
-    this._bounds = { version: this.dataVersion, bounds };
-    return cloneBounds(bounds);
-  }
-
-  private computeBounds(): SurfaceBounds {
-    const v = this.vertices;
-    if (v.length === 0) {
+    if (this.vertices.length === 0) {
       return { min: [0, 0, 0], max: [0, 0, 0], center: [0, 0, 0], radius: 1 };
     }
+    let extent = this._extent;
+    if (!extent || extent.version !== this.dataVersion) {
+      extent = { version: this.dataVersion, ...this.computeExtent() };
+      this._extent = extent;
+    }
+    // Every factor is positive, so the scaled box is the scaled corners: O(1) per scale change.
+    const s = this._scale;
+    const min: [number, number, number] = [
+      extent.min[0] * s[0],
+      extent.min[1] * s[1],
+      extent.min[2] * s[2],
+    ];
+    const max: [number, number, number] = [
+      extent.max[0] * s[0],
+      extent.max[1] * s[1],
+      extent.max[2] * s[2],
+    ];
+    const center: [number, number, number] = [
+      (min[0] + max[0]) / 2,
+      (min[1] + max[1]) / 2,
+      (min[2] + max[2]) / 2,
+    ];
+    const radius = 0.5 * Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) || 1;
+    return { min, max, center, radius };
+  }
+
+  /** The vertices' own min/max (before {@link scale3d}): one walk over the mesh. */
+  private computeExtent(): { min: [number, number, number]; max: [number, number, number] } {
+    const v = this.vertices;
     const min: [number, number, number] = [Infinity, Infinity, Infinity];
     const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
     for (let i = 0; i < v.length; i += 3) {
@@ -353,13 +435,7 @@ export class SurfaceLayer extends Layer {
         if (c > max[a]) max[a] = c;
       }
     }
-    const center: [number, number, number] = [
-      (min[0] + max[0]) / 2,
-      (min[1] + max[1]) / 2,
-      (min[2] + max[2]) / 2,
-    ];
-    const radius = 0.5 * Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) || 1;
-    return { min, max, center, radius };
+    return { min, max };
   }
 
   /** Line-list index buffer of the triangle edges, for wireframe rendering: each face (a,b,c) →
@@ -494,10 +570,6 @@ function centerVerticesInPlace(vertices: Float32Array): void {
     vertices[i + 1] -= cy;
     vertices[i + 2] -= cz;
   }
-}
-
-function cloneBounds(b: SurfaceBounds): SurfaceBounds {
-  return { min: [...b.min], max: [...b.max], center: [...b.center], radius: b.radius };
 }
 
 /** A CSS colour or RGBA (0..1) as RGBA; throws for a colour that does not parse. */
