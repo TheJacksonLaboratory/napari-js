@@ -5,6 +5,11 @@ All notable changes to napari-js are documented here. The format roughly follows
 
 ## [Unreleased]
 
+## [0.20.0]
+
+Markers stay visible at any zoom, drawn and picked at a floor in screen pixels, and a surface can be
+stretched per axis on the GPU, so stretching a view's Z re-uploads no mesh.
+
 ### Added
 
 - **`SurfaceLayer.scale3d`: a per-axis scale of a mesh, applied on the GPU.** As
