@@ -84,6 +84,12 @@ export interface PointsPickOptions {
   /** False for a point the host does not draw or does not want picked. */
   pickable?: (i: number) => boolean;
   /**
+   * Canvas pixels per world unit (the 2D camera's `zoom`) the layer is drawn at. With it, a marker
+   * is hit (and searched for) at the size it is drawn, {@link PointsLayer.minScreenSize}'s floor
+   * included; without it, at its data size. Ignored for a point `radiusAt` sizes.
+   */
+  zoom?: number;
+  /**
    * Which of several hit points wins:
    *  - `'topmost'` (default, napari's `get_value`): the last drawn — highest index — whatever
    *    its distance, because that is the marker on top, the one the user sees.
@@ -274,7 +280,9 @@ export class PointsLayer extends Layer {
     const qx = (worldX - tx) / sx;
     const qy = (worldY - ty) / sy;
     const index = this.pickIndex();
-    const maxRadius = opts.maxRadius ?? (index.maxSize / 2) * k;
+    // The drawn floor at this zoom (data units): a marker is hit at the size it is drawn.
+    const floor = opts.zoom !== undefined ? this.minSizeAt(opts.zoom) : 0;
+    const maxRadius = opts.maxRadius ?? (Math.max(index.maxSize, floor) / 2) * k;
     const reach = Math.max(tolerance, maxRadius) / k; // in data units
     const pos = this.positions;
     const topmost = tieBreak === 'topmost';
@@ -284,7 +292,10 @@ export class PointsLayer extends Layer {
       const dx = (pos[i * 2] - qx) * k;
       const dy = (pos[i * 2 + 1] - qy) * k;
       const d2 = dx * dx + dy * dy;
-      const r = Math.max(radiusAt ? radiusAt(i) : (this.sizeAt(i) / 2) * k, tolerance);
+      const r = Math.max(
+        radiusAt ? radiusAt(i) : (Math.max(this.sizeAt(i), floor) / 2) * k,
+        tolerance,
+      );
       if (!(d2 <= r * r)) return;
       if (pickable && !pickable(i)) return;
       // Candidates do not arrive in index order, so both rules compare indices explicitly.

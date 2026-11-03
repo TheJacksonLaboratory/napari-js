@@ -248,3 +248,30 @@ describe('points shader contract', () => {
     expect(POINTS_SHADER).toContain('if (code == 1u) { a = a * borderMix; }'); // ring
   });
 });
+
+describe('points picking with minScreenSize', () => {
+  it("hits a marker where it is drawn: at the floor's size when the zoom gives one", () => {
+    // Diameter 1 in data units; at zoom 0.1 the 10 px floor draws it 100 units wide.
+    const p = new PointsLayer(new Float32Array([0, 0]), { size: 1, minScreenSize: 10 });
+    expect(p.pick(25, 0, { zoom: 0.1 })).toBe(0);
+    expect(p.pick(55, 0, { zoom: 0.1 })).toBe(-1);
+    // Without the zoom the picker cannot know the floor: the data size, as before.
+    expect(p.pick(25, 0)).toBe(-1);
+    // Zoomed in, the floor is under the data size again (the cached index is reused).
+    expect(p.pick(25, 0, { zoom: 10 })).toBe(-1);
+    expect(p.pick(0.4, 0, { zoom: 10 })).toBe(0);
+    // A caller's own radius still wins over the floor.
+    expect(p.pick(25, 0, { zoom: 0.1, radiusAt: () => 1, maxRadius: 1 })).toBe(-1);
+  });
+
+  it('applies the floor through the layer scale, as drawn', () => {
+    const p = new PointsLayer(new Float32Array([0, 0]), {
+      size: 1,
+      minScreenSize: 10,
+      scale: [2, 2],
+    });
+    // 2 world units per data unit: at zoom 0.1 the floor is 50 data units, 100 world units.
+    expect(p.pick(45, 0, { zoom: 0.1 })).toBe(0);
+    expect(p.pick(55, 0, { zoom: 0.1 })).toBe(-1);
+  });
+});
