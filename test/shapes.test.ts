@@ -302,6 +302,50 @@ describe('fan apex', () => {
     ]);
   });
 
+  /** Twice the area a ring's triangles cover, summed. */
+  const filled2 = (ring: number[]): number => {
+    const n = ring.length / 2;
+    const { positions } = ringsToFan(Float32Array.from(ring), new Uint32Array([0, n]));
+    let sum = 0;
+    for (let t = 0; t < n; t++) sum += tri2(positions, t);
+    return sum;
+  };
+
+  it('fills 10,000 random simple rings exactly', () => {
+    // Star-shaped about the origin, with uneven radii and jittered angles (some samples nearly
+    // collinear), 4 to 48 vertices: whichever way each is triangulated, it adds up to its area.
+    let seed = 42;
+    const rand = (): number => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+    for (let k = 0; k < 10_000; k++) {
+      const n = 4 + Math.floor(rand() * 45);
+      const ring: number[] = [];
+      for (let i = 0; i < n; i++) {
+        const t = (2 * Math.PI * (i + rand() * 0.8)) / n;
+        const r = 1 + rand() * 20;
+        ring.push(Math.cos(t) * r, Math.sin(t) * r);
+      }
+      // Float32, as the coordinates are drawn.
+      const f32 = Array.from(Float32Array.from(ring));
+      expect(filled2(f32) / 2, JSON.stringify(ring)).toBeCloseTo(ringArea2(f32) / 2, 2);
+    }
+  });
+
+  it('ear-clips a ring with a repeated vertex or an explicit closing vertex, from any start', () => {
+    // Traced outlines often repeat a sample, or end on their first one; neither is star-convex
+    // here, so both go through the ear clipping, and the result must not depend on the start.
+    const u = [0, 0, 9, 0, 9, 9, 6, 9, 6, 3, 3, 3, 3, 9, 0, 9];
+    for (let shift = 0; shift < u.length; shift += 2) {
+      const ring = [...u.slice(shift), ...u.slice(0, shift)];
+      for (let v = 0; v < ring.length; v += 2) {
+        const repeated = [...ring.slice(0, v), ring[v], ring[v + 1], ...ring.slice(v)];
+        expect(filled2(repeated), JSON.stringify(repeated)).toBe(ringArea2(repeated));
+      }
+      const closed = [...ring, ring[0], ring[1]];
+      expect(polygonKernelPoint(Float32Array.from(closed), 0, closed.length / 2)).toBeNull();
+      expect(filled2(closed), JSON.stringify(closed)).toBe(ringArea2(closed));
+    }
+  });
+
   it('still draws a ring that crosses itself, rather than dropping it', () => {
     // A bow tie: no ear exists once it is cut, and the forced cut keeps it whole.
     const bow = Float32Array.from([0, 0, 4, 4, 4, 0, 0, 4]);
