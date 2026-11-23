@@ -24,9 +24,9 @@ All notable changes to napari-js are documented here. The format roughly follows
 
 ### Changed
 
-- **The image shader takes the part of the texture to draw (`uvRect`).** Its uniforms grow from 28
-  to 32 floats (`IMAGE_UNIFORM_FLOATS`); `packUvRect` writes the new four. A tiled fallback draws
-  part of a coarser tile; a whole image or tile draws `(0, 0, 1, 1)`, as before.
+- **The image shader takes the part of the texture to draw (`uvRect`).** Its uniform block grows
+  from 28 to 32 floats (internal to the image visuals). A tiled fallback draws part of a coarser
+  tile; a whole image or tile draws all of it, as before.
 
 ## [0.20.0]
 

@@ -173,8 +173,17 @@ export {
   tileGrid,
   visibleTiles,
   worldViewport,
+  planTiles,
+  tileRect,
 } from './io/pyramid';
-export type { Rect, VisibleTile, VisibleTilesOptions } from './io/pyramid';
+export type {
+  Rect,
+  VisibleTile,
+  VisibleTilesOptions,
+  TileRef,
+  TileDraw,
+  TilePlan,
+} from './io/pyramid';
 
 // Whole-level / volume reads from a tiled source
 export {

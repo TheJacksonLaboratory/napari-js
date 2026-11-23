@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { planTiles, tileRect, type TileDraw, type TileRef } from '../src/io/pyramid';
+// Through the package entry, as a consumer imports them.
+import { planTiles, tileRect, type TileDraw, type TileRef } from '../src';
 
 // A 1024² image in 256 px tiles: level 0 is 4×4 tiles, level 1 2×2, level 2 one tile.
 const W = 1024;
