@@ -5,6 +5,29 @@ All notable changes to napari-js are documented here. The format roughly follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A tiled image keeps the best resolution at hand while tiles load, for every layer.** Zooming in
+  dropped every tile still loading to the COARSEST level, and an additive layer (each channel of a
+  multichannel image but the first) drew nothing at all until its own tiles arrived: one channel,
+  blocky, then the others popping in. Each missing tile is now filled from the tiles already loaded
+  at other levels: the next finer level when it covers the tile (zooming out), else the nearest
+  coarser one (zooming in), else whatever finer tiles are loaded. Each fallback is clipped to its
+  tile, so every point is drawn once and additive layers do not double up. The coarsest level is
+  always fetched for the view, so there is always something to fall back to. The plan is a pure,
+  exported function, `planTiles` (with `tileRect`, `TileRef`, `TileDraw`, `TilePlan`).
+- **A tiled image aborts the tile fetches the view has left.** `TiledImageVisual` passes an
+  `AbortSignal` to `TiledSource.fetchTile` and aborts it once the tile is no longer wanted (another
+  level, panned away, another z), so zooming through several levels no longer queues their tiles
+  ahead of the ones on screen. A source that ignores the signal still works: its late answer is
+  dropped.
+
+### Changed
+
+- **The image shader takes the part of the texture to draw (`uvRect`).** Its uniform block grows
+  from 28 to 32 floats (internal to the image visuals). A tiled fallback draws part of a coarser
+  tile; a whole image or tile draws all of it, as before.
+
 ## [0.20.0]
 
 Markers stay visible at any zoom, drawn and picked at a floor in screen pixels, and a surface can be
