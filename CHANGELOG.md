@@ -5,6 +5,11 @@ All notable changes to napari-js are documented here. The format roughly follows
 
 ## [Unreleased]
 
+## [0.20.1]
+
+A zoomed tiled image keeps every channel at the best resolution already loaded while its tiles
+load, and stops fetching the tiles the view has left.
+
 ### Fixed
 
 - **A tiled image keeps the best resolution at hand while tiles load, for every layer.** Zooming in
