@@ -3,29 +3,45 @@ import type { BlendMode } from '../layers/layer';
 import type { LayerVisual, RenderView } from './layer-visual';
 import type { TiledSource } from '../io/texture-source';
 import { multiply, scaleTranslate2d } from '../math/mat4';
-import { selectLevel, visibleTiles, worldViewport, type VisibleTile } from '../io/pyramid';
+import { planTiles, selectLevel, worldViewport, type TileDraw, type TileRef } from '../io/pyramid';
 import { LruCache } from '../cache/lru';
 import { buildLut, LUT_SIZE } from '../color/lut';
 import { GRAY } from '../color/colormap';
 import { formatPlanFor, toUploadData, type FormatPlan } from './format-plan';
 import { IMAGE_COLORMAP_SHADER } from './image-colormap-shader';
-import { packImageDisplayUniforms } from './image-visual';
+import { IMAGE_UNIFORM_FLOATS, packImageDisplayUniforms, packUvRect } from './image-visual';
 import { blendStateFor } from './blend';
 
-const UNIFORM_FLOATS = 28;
+const UNIFORM_FLOATS = IMAGE_UNIFORM_FLOATS;
 const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
 const DEFAULT_TILE_CAPACITY = 192;
 
-interface TileEntry {
-  texture: GPUTexture;
+/** A uniform buffer and the bind group that draws the tile with it. */
+interface DrawSlot {
   uniformBuffer: GPUBuffer;
   bindGroup: GPUBindGroup;
 }
 
+interface TileEntry {
+  texture: GPUTexture;
+  /**
+   * One per draw of the tile in a frame. A tile is usually drawn once, but a coarser tile
+   * standing in for several finer ones still loading is drawn once per finer tile, each time a
+   * different part of it — and `writeBuffer` lands before the pass runs, so draws sharing one
+   * buffer would all see the last values written.
+   */
+  slots: DrawSlot[];
+  /** The frame the tile was last drawn in, and how many slots that frame has used. */
+  frame: number;
+  used: number;
+}
+
 /**
- * Renders a pyramidal {@link TiledSource}: selects a pyramid level from zoom, draws the
- * visible tiles (fetched lazily and cached on the GPU with LRU eviction), and underlays the
- * coarsest level so pans/zooms never flash blank. Z-scrubbing fetches the new slice's tiles
+ * Renders a pyramidal {@link TiledSource}: selects a pyramid level from zoom and draws the
+ * visible tiles (fetched lazily and cached on the GPU with LRU eviction). A tile still loading
+ * is filled from the tiles already loaded at other levels (see {@link planTiles}), so a zoom or
+ * pan keeps the best resolution at hand, for every channel layer, additive ones included.
+ * Fetches the view no longer needs are aborted. Z-scrubbing fetches the new slice's tiles
  * (cache keyed by z, so revisited slices are instant). Mirrors napari's tiled-image path.
  */
 export class TiledImageVisual implements LayerVisual {
@@ -39,7 +55,10 @@ export class TiledImageVisual implements LayerVisual {
   private readonly lutSampler: GPUSampler;
   private readonly scratch = new Float32Array(UNIFORM_FLOATS);
   private readonly cache: LruCache<TileEntry>;
-  private readonly pending = new Set<string>();
+  /** Tiles being fetched, each with the controller that aborts it once the view moves on. */
+  private readonly pending = new Map<string, AbortController>();
+  /** Counts draws, so a tile's slots are reused from one frame to the next. */
+  private frame = 0;
 
   private srcSampler: GPUSampler;
   private pipeline: GPURenderPipeline;
@@ -85,7 +104,7 @@ export class TiledImageVisual implements LayerVisual {
 
     this.cache = new LruCache<TileEntry>(DEFAULT_TILE_CAPACITY, (entry) => {
       entry.texture.destroy();
-      entry.uniformBuffer.destroy();
+      for (const slot of entry.slots) slot.uniformBuffer.destroy();
     });
   }
 
@@ -152,20 +171,24 @@ export class TiledImageVisual implements LayerVisual {
     return `${z}:${level}:${col}:${row}`;
   }
 
-  /** Return a ready tile, or kick an async fetch and return undefined. */
-  private ensureTile(level: number, col: number, row: number, z: number): TileEntry | undefined {
-    const key = this.keyOf(level, col, row, z);
-    const cached = this.cache.get(key);
-    if (cached) return cached;
-    if (this.pending.has(key)) return undefined;
+  /** Fetch a tile unless it is cached or already on its way. */
+  private request(ref: TileRef, z: number): void {
+    const key = this.keyOf(ref.level, ref.col, ref.row, z);
+    if (this.cache.has(key) || this.pending.has(key)) return;
 
-    this.pending.add(key);
+    const controller = new AbortController();
+    this.pending.set(key, controller);
     this.source
-      .fetchTile({ level, col, row, z })
+      .fetchTile({ level: ref.level, col: ref.col, row: ref.row, z }, controller.signal)
       .then((chunk) => {
-        this.pending.delete(key);
-        if (this.disposed) return;
         const isBitmap = typeof ImageBitmap !== 'undefined' && chunk.data instanceof ImageBitmap;
+        // Aborted (a source that ignores the signal still answers): the view moved on, and a
+        // newer request for the same tile may be in flight.
+        if (this.disposed || controller.signal.aborted) {
+          if (isBitmap) (chunk.data as ImageBitmap).close?.();
+          return;
+        }
+        this.pending.delete(key);
         const texture = this.device.createTexture({
           size: [chunk.width, chunk.height],
           format: this.plan.format,
@@ -192,42 +215,69 @@ export class TiledImageVisual implements LayerVisual {
             { width: chunk.width, height: chunk.height },
           );
         }
-        const uniformBuffer = this.device.createBuffer({
-          size: UNIFORM_BYTES,
-          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        });
-        const bindGroup = this.device.createBindGroup({
-          layout: this.bindGroupLayout,
-          entries: [
-            { binding: 0, resource: { buffer: uniformBuffer } },
-            { binding: 1, resource: this.srcSampler },
-            { binding: 2, resource: texture.createView() },
-            { binding: 3, resource: this.lutSampler },
-            { binding: 4, resource: this.lutTexture.createView() },
-          ],
-        });
-        this.cache.set(key, { texture, uniformBuffer, bindGroup });
+        this.cache.set(key, { texture, slots: [], frame: -1, used: 0 });
         this.opts.onNeedsRedraw();
       })
-      .catch(() => this.pending.delete(key));
-    return undefined;
+      .catch(() => {
+        if (this.pending.get(key) === controller) this.pending.delete(key);
+      });
+  }
+
+  /** Abort the fetches of tiles not in `wanted` (keys): the view has moved on from them. */
+  private abortUnwanted(wanted: ReadonlySet<string>): void {
+    for (const [key, controller] of this.pending) {
+      if (wanted.has(key)) continue;
+      controller.abort();
+      this.pending.delete(key);
+    }
+  }
+
+  /** The entry's next unused slot this frame, created on first need. */
+  private slotFor(entry: TileEntry): DrawSlot {
+    if (entry.frame !== this.frame) {
+      entry.frame = this.frame;
+      entry.used = 0;
+    }
+    let slot = entry.slots[entry.used];
+    if (!slot) {
+      const uniformBuffer = this.device.createBuffer({
+        size: UNIFORM_BYTES,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      const bindGroup = this.device.createBindGroup({
+        layout: this.bindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: uniformBuffer } },
+          { binding: 1, resource: this.srcSampler },
+          { binding: 2, resource: entry.texture.createView() },
+          { binding: 3, resource: this.lutSampler },
+          { binding: 4, resource: this.lutTexture.createView() },
+        ],
+      });
+      slot = { uniformBuffer, bindGroup };
+      entry.slots.push(slot);
+    }
+    entry.used++;
+    return slot;
   }
 
   private drawTile(
     pass: GPURenderPassEncoder,
     entry: TileEntry,
     mvp: Float32Array,
-    tile: VisibleTile,
+    tile: TileDraw,
   ): void {
+    const slot = this.slotFor(entry);
     const s = this.scratch;
     s.set(mvp, 0);
-    s[16] = tile.w;
-    s[17] = tile.h;
-    s[18] = tile.x;
-    s[19] = tile.y;
+    s[16] = tile.rect.width;
+    s[17] = tile.rect.height;
+    s[18] = tile.rect.x;
+    s[19] = tile.rect.y;
     packImageDisplayUniforms(s, this.layer, this.plan.sampleScale, this.plan.isRgba);
-    this.device.queue.writeBuffer(entry.uniformBuffer, 0, s);
-    pass.setBindGroup(0, entry.bindGroup);
+    packUvRect(s, ...tile.uv);
+    this.device.queue.writeBuffer(slot.uniformBuffer, 0, s);
+    pass.setBindGroup(0, slot.bindGroup);
     pass.draw(6);
   }
 
@@ -264,25 +314,26 @@ export class TiledImageVisual implements LayerVisual {
     );
 
     pass.setPipeline(this.pipeline);
+    this.frame++;
 
-    // Coarse base underlay (skip for additive blending, where double-counting would be wrong).
-    const coarse = levels - 1;
-    if (this.layer.blending !== 'additive' && target !== coarse) {
-      for (const tile of visibleTiles(view, width, height, coarse, tileSize, levelScales)) {
-        const entry = this.ensureTile(coarse, tile.col, tile.row, z);
-        if (entry) this.drawTile(pass, entry, mvp, tile);
-      }
+    const plan = planTiles(view, width, height, target, levels, tileSize, levelScales, (ref) =>
+      this.cache.has(this.keyOf(ref.level, ref.col, ref.row, z)),
+    );
+    for (const d of plan.draws) {
+      const entry = this.cache.get(this.keyOf(d.level, d.col, d.row, z));
+      if (entry) this.drawTile(pass, entry, mvp, d);
     }
-
-    // Target level: draw ready tiles; kick fetches for the rest.
-    for (const tile of visibleTiles(view, width, height, target, tileSize, levelScales)) {
-      const entry = this.ensureTile(target, tile.col, tile.row, z);
-      if (entry) this.drawTile(pass, entry, mvp, tile);
+    const wanted = new Set<string>();
+    for (const ref of plan.fetch) {
+      wanted.add(this.keyOf(ref.level, ref.col, ref.row, z));
+      this.request(ref, z);
     }
+    this.abortUnwanted(wanted);
   }
 
   dispose(): void {
     this.disposed = true;
+    this.abortUnwanted(new Set());
     this.cache.clear();
     this.lutTexture.destroy();
   }

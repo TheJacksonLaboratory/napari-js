@@ -145,3 +145,137 @@ export function visibleTiles(
   if (limit !== undefined && limit >= 0 && tiles.length > limit) tiles.length = Math.floor(limit);
   return tiles;
 }
+
+/** One tile of a pyramid level. */
+export interface TileRef {
+  level: number;
+  col: number;
+  row: number;
+}
+
+/** One draw of a tile: where it goes and which part of its texture fills it. */
+export interface TileDraw extends TileRef {
+  /** Destination, in level-0 coords. */
+  rect: Rect;
+  /** The part of the tile's texture drawn there: `[u0, v0, du, dv]`, in 0..1 of the tile. */
+  uv: [number, number, number, number];
+}
+
+/** What to draw this frame, and what to fetch for the next. */
+export interface TilePlan {
+  draws: TileDraw[];
+  fetch: TileRef[];
+}
+
+/** The level-0 rect of a tile (an edge tile clipped to the image). */
+export function tileRect(
+  ref: TileRef,
+  width: number,
+  height: number,
+  tileSize: number,
+  scales?: readonly number[],
+): Rect {
+  const tw = tileSize * levelScale(ref.level, scales);
+  const x = ref.col * tw;
+  const y = ref.row * tw;
+  return { x, y, width: Math.min(tw, width - x), height: Math.min(tw, height - y) };
+}
+
+/**
+ * The tiles to draw for a view at pyramid level `target`, and the tiles to fetch.
+ *
+ * Each target tile not yet loaded is filled from tiles already loaded at other levels, so a
+ * zoom or pan shows the best resolution at hand instead of dropping to the coarsest level, or
+ * to nothing:
+ *
+ *  1. the next finer level, when its tiles cover the target tile completely (zooming out);
+ *  2. else the nearest coarser level whose tiles cover it completely (zooming in), down to the
+ *     coarsest level, which is always fetched for the view so that something can fill in;
+ *  3. else whatever finer tiles are loaded, leaving the rest blank until the target arrives.
+ *
+ * Each fallback is clipped to its target tile, so every point of the image is drawn by exactly
+ * one draw: no double-counting under additive blending (one layer per channel), and no darker
+ * seams under translucent ones.
+ *
+ * `fetch` lists the coarsest level's missing tiles first (few, and what everything falls back
+ * to), then the target level's, nearest the view's centre first.
+ */
+export function planTiles(
+  view: Rect,
+  width: number,
+  height: number,
+  target: number,
+  levels: number,
+  tileSize: number,
+  scales: readonly number[] | undefined,
+  ready: (ref: TileRef) => boolean,
+): TilePlan {
+  const draws: TileDraw[] = [];
+  const fetch: TileRef[] = [];
+  const coarsest = levels - 1;
+
+  /** The tiles of `level` that overlap `rect`. */
+  const covering = (level: number, rect: Rect): TileRef[] =>
+    visibleTiles(rect, width, height, level, tileSize, scales).map(({ col, row }) => ({
+      level,
+      col,
+      row,
+    }));
+  /** `ref`'s part inside `dest`, or null for a sliver left by rounding. */
+  const piece = (ref: TileRef, dest: Rect): TileDraw | null => {
+    const a = tileRect(ref, width, height, tileSize, scales);
+    const x0 = Math.max(a.x, dest.x);
+    const y0 = Math.max(a.y, dest.y);
+    const x1 = Math.min(a.x + a.width, dest.x + dest.width);
+    const y1 = Math.min(a.y + a.height, dest.y + dest.height);
+    const eps = 1e-6 * Math.max(a.width, a.height);
+    if (x1 - x0 <= eps || y1 - y0 <= eps) return null;
+    return {
+      ...ref,
+      rect: { x: x0, y: y0, width: x1 - x0, height: y1 - y0 },
+      uv: [(x0 - a.x) / a.width, (y0 - a.y) / a.height, (x1 - x0) / a.width, (y1 - y0) / a.height],
+    };
+  };
+  const drawAll = (refs: TileRef[], dest: Rect): void => {
+    for (const ref of refs) {
+      const d = piece(ref, dest);
+      if (d) draws.push(d);
+    }
+  };
+
+  if (target !== coarsest) {
+    for (const t of visibleTiles(view, width, height, coarsest, tileSize, scales)) {
+      const ref = { level: coarsest, col: t.col, row: t.row };
+      if (!ready(ref)) fetch.push(ref);
+    }
+  }
+
+  const tiles = visibleTiles(view, width, height, target, tileSize, scales, {
+    order: 'center-out',
+  });
+  for (const t of tiles) {
+    const ref = { level: target, col: t.col, row: t.row };
+    const rect = { x: t.x, y: t.y, width: t.w, height: t.h };
+    if (ready(ref)) {
+      draws.push({ ...ref, rect, uv: [0, 0, 1, 1] });
+      continue;
+    }
+    fetch.push(ref);
+
+    const finer = target > 0 ? covering(target - 1, rect) : [];
+    if (finer.length && finer.every(ready)) {
+      drawAll(finer, rect);
+      continue;
+    }
+    let filled = false;
+    for (let level = target + 1; level <= coarsest && !filled; level++) {
+      const coarser = covering(level, rect);
+      if (coarser.length && coarser.every(ready)) {
+        drawAll(coarser, rect);
+        filled = true;
+      }
+    }
+    if (!filled) drawAll(finer.filter(ready), rect);
+  }
+  return { draws, fetch };
+}

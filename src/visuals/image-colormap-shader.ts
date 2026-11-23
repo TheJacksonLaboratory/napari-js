@@ -9,6 +9,7 @@ struct U {
   origin : vec2<f32>,   // data-space origin of this quad (0 for a full image; tile origin for tiles)
   params : vec4<f32>,   // climLo, climHi, gamma, opacity   (clim already normalized to sample space)
   flags : vec4<f32>,    // isRgba, invert, transparentBelow, 0
+  uvRect : vec4<f32>,   // the part of the texture drawn: u0, v0, du, dv ((0,0,1,1): all of it)
 };
 
 @group(0) @binding(0) var<uniform> u : U;
@@ -31,7 +32,7 @@ fn vs(@builtin(vertex_index) vi : u32) -> VSOut {
   let c = corners[vi];
   var out : VSOut;
   out.position = u.mvp * vec4<f32>(u.origin + c * u.imageSize, 0.0, 1.0);
-  out.uv = c;
+  out.uv = u.uvRect.xy + c * u.uvRect.zw;
   return out;
 }
 

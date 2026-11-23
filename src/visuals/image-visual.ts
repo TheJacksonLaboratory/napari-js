@@ -9,7 +9,7 @@ import { formatPlanFor, toUploadData, type FormatPlan } from './format-plan';
 import { IMAGE_COLORMAP_SHADER } from './image-colormap-shader';
 import { blendStateFor } from './blend';
 
-const UNIFORM_FLOATS = 28; // 112 bytes: mat4(16) + vec2+pad(4) + vec4(4) + vec4(4)
+const UNIFORM_FLOATS = 32; // 128 bytes: mat4(16) + vec2 size + vec2 origin + params(4) + flags(4) + uvRect(4)
 const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
 /** Floats in the image shader's uniform block (shared with the tiled visual). */
 export const IMAGE_UNIFORM_FLOATS = UNIFORM_FLOATS;
@@ -35,6 +35,23 @@ export function packImageDisplayUniforms(
   out[25] = layer.invert ? 1 : 0;
   out[26] = layer.transparentBelow ? 1 : 0;
   out[27] = 0;
+}
+
+/**
+ * The part of the texture an image draw samples, `[u0, v0, du, dv]` in 0..1: all of it for a
+ * whole image or tile, part of a coarser tile standing in for a finer one still loading.
+ */
+export function packUvRect(
+  out: Float32Array,
+  u0: number,
+  v0: number,
+  du: number,
+  dv: number,
+): void {
+  out[28] = u0;
+  out[29] = v0;
+  out[30] = du;
+  out[31] = dv;
 }
 
 /** A {@link FormatPlan} plus the bytes to upload (null = external image via copyExternalImage). */
@@ -267,6 +284,7 @@ export class ImageVisual implements LayerVisual {
     s[18] = 0;
     s[19] = 0;
     packImageDisplayUniforms(s, this.layer, this.plan.sampleScale, this.plan.isRgba);
+    packUvRect(s, 0, 0, 1, 1);
     this.device.queue.writeBuffer(this.uniformBuffer, 0, s);
 
     pass.setPipeline(this.pipeline);
